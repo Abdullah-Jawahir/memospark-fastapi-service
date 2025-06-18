@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+python-multipart
+PyMuPDF
+python-docx
+python-pptx
+transformers>=4.26.0
+torch
+numpy<2
+pydantic
+sentence-transformers
