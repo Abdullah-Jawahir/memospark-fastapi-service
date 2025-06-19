@@ -398,17 +398,143 @@ def generate_flashcards_with_pipeline(text: str, language: str = "en") -> List[D
         logger.error(f"Error in pipeline flashcard generation: {str(e)}")
         return []
 
+def generate_simple_quizzes(text: str, language: str = "en") -> List[Dict[str, Any]]:
+    """Generate simple quizzes using text processing when model fails."""
+    try:
+        sentences = [s.strip() for s in text.split('.') if len(s.strip()) > 20]
+        quizzes = []
+        for i, sentence in enumerate(sentences[:5]):
+            words = sentence.split()
+            if len(words) > 6:
+                # Use the first 5 words as the question context
+                question = f"Which of the following best completes: {' '.join(words[:5])}... ?"
+                # Create 4 options: 1 correct (the sentence), 3 distractors (other sentences)
+                distractors = [s for j, s in enumerate(sentences) if j != i and len(s.split()) > 6][:3]
+                options = distractors + [sentence]
+                import random
+                random.shuffle(options)
+                correct_option = sentence
+                quizzes.append({
+                    "question": question,
+                    "options": options,
+                    "answer": correct_option,
+                    "correct_answer_option": correct_option,
+                    "type": "quiz",
+                    "difficulty": "Easy"
+                })
+        return quizzes
+    except Exception as e:
+        logger.error(f"Error in simple quiz generation: {str(e)}")
+        return []
+
+def generate_quizzes(text: str, language: str = "en") -> List[Dict[str, Any]]:
+    """Generate quizzes (MCQs) from text using Flan-T5 model with proper prompting."""
+    try:
+        text = text.strip()
+        if len(text) < 50:
+            logger.warning("Text is too short to generate meaningful quizzes")
+            return []
+        max_chunk_size = 800
+        chunks = []
+        for i in range(0, len(text), max_chunk_size):
+            chunk = text[i:i + max_chunk_size]
+            if len(chunk.strip()) > 100:
+                chunks.append(chunk.strip())
+        if not chunks:
+            logger.warning("No valid text chunks found for quiz generation")
+            return generate_simple_quizzes(text, language)
+        quizzes = []
+        for chunk in chunks:
+            if language == "en":
+                prompt = f"""Generate 2-3 multiple choice quiz questions from this text. For each quiz, provide:\nQuestion: [Write a clear MCQ]\nOptions: [List 4 options separated by semicolons]\nCorrect Option: [The correct option text]\nAnswer: [Short explanation or correct answer]\n\nText: {chunk}\n\nGenerate quizzes:"""
+            elif language == "si":
+                prompt = f"""Generate 2-3 multiple choice quiz questions from this text in Sinhala. For each quiz, provide:\nQuestion: [Write a clear MCQ in Sinhala]\nOptions: [List 4 options separated by semicolons in Sinhala]\nCorrect Option: [The correct option text in Sinhala]\nAnswer: [Short explanation or correct answer in Sinhala]\n\nText: {chunk}\n\nGenerate quizzes:"""
+            elif language == "ta":
+                prompt = f"""Generate 2-3 multiple choice quiz questions from this text in Tamil. For each quiz, provide:\nQuestion: [Write a clear MCQ in Tamil]\nOptions: [List 4 options separated by semicolons in Tamil]\nCorrect Option: [The correct option text in Tamil]\nAnswer: [Short explanation or correct answer in Tamil]\n\nText: {chunk}\n\nGenerate quizzes:"""
+            else:
+                prompt = f"""Generate 2-3 multiple choice quiz questions from this text. For each quiz, provide:\nQuestion: [Write a clear MCQ]\nOptions: [List 4 options separated by semicolons]\nCorrect Option: [The correct option text]\nAnswer: [Short explanation or correct answer]\n\nText: {chunk}\n\nGenerate quizzes:"""
+            try:
+                inputs = tokenizer(
+                    prompt,
+                    return_tensors="pt",
+                    max_length=1024,
+                    truncation=True,
+                    padding=True
+                )
+                with torch.no_grad():
+                    outputs = model.generate(
+                        inputs["input_ids"],
+                        max_length=400,
+                        num_return_sequences=1,
+                        temperature=0.7,
+                        top_p=0.9,
+                        do_sample=True,
+                        pad_token_id=tokenizer.eos_token_id,
+                        eos_token_id=tokenizer.eos_token_id,
+                        no_repeat_ngram_size=2
+                    )
+                generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+                if "Generate quizzes:" in generated_text:
+                    generated_part = generated_text.split("Generate quizzes:")[-1].strip()
+                else:
+                    generated_part = generated_text.strip()
+                quiz_blocks = generated_part.split("Question:")
+                for block in quiz_blocks[1:]:
+                    try:
+                        if "Options:" in block and "Correct Option:" in block and "Answer:" in block:
+                            q_part, rest = block.split("Options:", 1)
+                            o_part, rest2 = rest.split("Correct Option:", 1)
+                            c_part, a_part = rest2.split("Answer:", 1)
+                            question = q_part.strip()
+                            options = [opt.strip() for opt in o_part.strip().split(';') if opt.strip()]
+                            correct_option = c_part.strip().split('\n')[0].strip()
+                            answer = a_part.strip().split('\n')[0].strip()
+                            if (len(question) > 10 and len(options) == 4 and correct_option in options):
+                                quizzes.append({
+                                    "question": question,
+                                    "options": options,
+                                    "answer": answer,
+                                    "correct_answer_option": correct_option,
+                                    "type": "quiz",
+                                    "difficulty": "Medium"
+                                })
+                    except Exception as parse_error:
+                        logger.warning(f"Failed to parse quiz block: {block[:100]}... Error: {str(parse_error)}")
+                        continue
+            except Exception as chunk_error:
+                logger.warning(f"Error processing quiz chunk: {str(chunk_error)}")
+                continue
+        if len(quizzes) < 2:
+            logger.info("Model generated insufficient quizzes, using simple fallback")
+            fallback_quizzes = generate_simple_quizzes(text, language)
+            quizzes.extend(fallback_quizzes)
+        unique_quizzes = []
+        seen_questions = set()
+        for quiz in quizzes:
+            question_key = quiz["question"][:50].lower()
+            if question_key not in seen_questions:
+                seen_questions.add(question_key)
+                unique_quizzes.append(quiz)
+        if len(unique_quizzes) > 10:
+            unique_quizzes = unique_quizzes[:10]
+        logger.info(f"Successfully generated {len(unique_quizzes)} quizzes using Flan-T5 model")
+        return unique_quizzes
+    except Exception as e:
+        error_msg = f"Error generating quizzes: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        return generate_simple_quizzes(text, language)
+
 @app.post("/process-file")
 async def process_file(file: UploadFile = File(...), language: str = "en"):
     """
-    Process uploaded document and generate flashcards.
+    Process uploaded document and generate flashcards and quizzes.
     
     Args:
         file: The uploaded file (PDF, DOCX, or PPTX)
         language: The language of the document (en, si, ta)
     
     Returns:
-        JSON response containing generated flashcards
+        JSON response containing generated flashcards and quizzes
     """
     # Log request details
     logger.info(f"Processing file: {file.filename}, language: {language}, size: {file.size} bytes")
@@ -445,8 +571,11 @@ async def process_file(file: UploadFile = File(...), language: str = "en"):
         # Generate flashcards
         flashcards = generate_flashcards(text, language)
         
-        logger.info(f"Successfully processed file {file.filename} and generated {len(flashcards)} flashcards")
-        return {"generated_cards": flashcards}
+        # Generate quizzes
+        quizzes = generate_quizzes(text, language)
+        
+        logger.info(f"Successfully processed file {file.filename} and generated {len(flashcards)} flashcards and {len(quizzes)} quizzes")
+        return {"generated_content": {"flashcards": flashcards, "quizzes": quizzes}}
         
     except HTTPException:
         # Re-raise HTTP exceptions as they are already logged
