@@ -4,7 +4,7 @@ import fitz  # PyMuPDF
 from docx import Document as DocxDocument
 from pptx import Presentation
 import io
-from transformers import pipeline, AutoTokenizer, AutoModelForSeq2SeqLM
+from transformers import pipeline, AutoTokenizer, AutoModelForSeq2SeqLM, AutoModelForCausalLM
 import torch
 from typing import List, Dict, Any, Optional
 import logging
@@ -12,9 +12,11 @@ import os
 from pathlib import Path
 from datetime import datetime
 import re
+import random
 from fastapi import Request
 from fastapi import Query
 from fastapi import APIRouter
+import json
 
 # Configure logging with file handler
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -62,21 +64,57 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize the model and tokenizer - using a better model for text generation
-MODEL_NAME = "google/flan-t5-small"  # Better for instruction following
+# Initialize multiple models for different tasks
+MODEL_CONFIGS = {
+    "question_generation": {
+        "name": "microsoft/DialoGPT-medium",  # Better for conversational Q&A
+        "alternative": "google/flan-t5-base"  # Larger T5 model
+    },
+    "text_generation": {
+        "name": "microsoft/DialoGPT-small",
+        "alternative": "google/flan-t5-large"
+    }
+}
+
+# Try to load the best available model
+def load_best_model():
+    """Load the best available model for text generation tasks."""
+    models_to_try = [
+        "google/flan-t5-base",  # Better than small version
+        "microsoft/DialoGPT-medium",
+        "google/flan-t5-small",  # Fallback
+    ]
+    
+    for model_name in models_to_try:
+        try:
+            logger.info(f"Attempting to load model: {model_name}")
+            tokenizer = AutoTokenizer.from_pretrained(model_name, cache_dir=str(CACHE_DIR))
+            
+            if "flan-t5" in model_name:
+                model = AutoModelForSeq2SeqLM.from_pretrained(model_name, cache_dir=str(CACHE_DIR))
+            else:
+                model = AutoModelForCausalLM.from_pretrained(model_name, cache_dir=str(CACHE_DIR))
+            
+            logger.info(f"Successfully loaded model: {model_name}")
+            return tokenizer, model, model_name
+        except Exception as e:
+            logger.warning(f"Failed to load {model_name}: {str(e)}")
+            continue
+    
+    raise Exception("Failed to load any suitable model")
+
 try:
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, cache_dir=str(CACHE_DIR))
-    model = AutoModelForSeq2SeqLM.from_pretrained(MODEL_NAME, cache_dir=str(CACHE_DIR))
-    logger.info("Model and tokenizer loaded successfully")
+    tokenizer, model, current_model_name = load_best_model()
+    logger.info(f"Using model: {current_model_name}")
 except Exception as e:
-    logger.error(f"Failed to load model and tokenizer: {str(e)}")
+    logger.error(f"Failed to load any model: {str(e)}")
     raise
 
-# Initialize question generation pipeline as backup
+# Initialize question generation pipeline
 try:
     question_generator = pipeline(
-        "text2text-generation",
-        model="google/flan-t5-small",
+        "text2text-generation" if "flan-t5" in current_model_name else "text-generation",
+        model=model,
         tokenizer=tokenizer,
         device=-1  # Use CPU
     )
@@ -92,13 +130,27 @@ def clean_text(text: str) -> str:
     text = text.strip()
     
     # Remove common PDF artifacts
-    text = re.sub(r'[^\w\s\.\,\;\:\!\?\-\(\)\[\]]+', ' ', text)
+    text = re.sub(r'[^\w\s\.\,\;\:\!\?\-\(\)\[\]\'\"]+', ' ', text)
     
     # Fix common OCR issues
     text = re.sub(r'(\w)\|(\w)', r'\1l\2', text)  # Fix common OCR 'l' -> '|' issue
     text = re.sub(r'(\w)0(\w)', r'\1o\2', text)   # Fix common OCR 'o' -> '0' issue
     
     return text
+
+def extract_key_concepts(text: str, max_concepts: int = 10) -> List[str]:
+    """Extract key concepts from text for better question generation."""
+    # Simple keyword extraction based on capitalization and frequency
+    words = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', text)
+    
+    # Count word frequency
+    word_freq = {}
+    for word in words:
+        word_freq[word] = word_freq.get(word, 0) + 1
+    
+    # Sort by frequency and return top concepts
+    key_concepts = sorted(word_freq.items(), key=lambda x: x[1], reverse=True)
+    return [concept[0] for concept in key_concepts[:max_concepts]]
 
 def extract_text_from_pdf(file_content: bytes) -> str:
     """Extract text from PDF file."""
@@ -159,373 +211,382 @@ def extract_text_from_pptx(file_content: bytes) -> str:
         logger.error(error_msg, exc_info=True)
         raise HTTPException(status_code=400, detail="Error processing PPTX file")
 
-def generate_simple_flashcards(text: str, language: str = "en") -> List[Dict[str, Any]]:
-    """Generate simple flashcards using text processing when model fails."""
+def generate_with_model(prompt: str, max_length: int = 200) -> str:
+    """Generate text using the loaded model."""
     try:
-        # Split text into sentences
-        sentences = [s.strip() for s in text.split('.') if len(s.strip()) > 20]
+        inputs = tokenizer(
+            prompt,
+            return_tensors="pt",
+            max_length=1024,
+            truncation=True,
+            padding=True
+        )
         
-        flashcards = []
-        for i, sentence in enumerate(sentences[:10]):  # Limit to 10 sentences
-            # Create a simple question-answer pair
-            words = sentence.split()
-            if len(words) > 5:
-                # Take first few words as question context
-                question_words = words[:min(5, len(words)//2)]
-                question = f"What is described by: {' '.join(question_words)}..."
-                answer = sentence
-                
-                flashcards.append({
-                    "question": question,
-                    "answer": answer,
-                    "type": "Q&A",
-                    "difficulty": "Easy"
-                })
+        with torch.no_grad():
+            if "flan-t5" in current_model_name:
+                outputs = model.generate(
+                    inputs["input_ids"],
+                    max_length=max_length,
+                    num_return_sequences=1,
+                    temperature=0.7,
+                    top_p=0.9,
+                    do_sample=True,
+                    pad_token_id=tokenizer.eos_token_id,
+                    eos_token_id=tokenizer.eos_token_id,
+                    no_repeat_ngram_size=2
+                )
+            else:
+                outputs = model.generate(
+                    inputs["input_ids"],
+                    max_length=len(inputs["input_ids"][0]) + max_length,
+                    num_return_sequences=1,
+                    temperature=0.7,
+                    top_p=0.9,
+                    do_sample=True,
+                    pad_token_id=tokenizer.eos_token_id,
+                    eos_token_id=tokenizer.eos_token_id,
+                    no_repeat_ngram_size=2
+                )
         
-        return flashcards
+        generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        
+        # For non-T5 models, remove the input prompt from output
+        if "flan-t5" not in current_model_name:
+            generated_text = generated_text[len(prompt):].strip()
+        
+        return generated_text
     except Exception as e:
-        logger.error(f"Error in simple flashcard generation: {str(e)}")
-        return []
+        logger.error(f"Error in model generation: {str(e)}")
+        return ""
 
 def generate_flashcards(text: str, language: str = "en", difficulty: str = "beginner") -> List[Dict[str, Any]]:
-    """Generate flashcards from text using Flan-T5 model with proper prompting."""
+    """Generate flashcards from text using improved prompting and parsing."""
     try:
-        # Clean and prepare the text
         text = text.strip()
         if len(text) < 50:
             logger.warning("Text is too short to generate meaningful flashcards")
             return []
         
-        # Split text into smaller chunks for better processing
-        max_chunk_size = 800
-        chunks = []
-        for i in range(0, len(text), max_chunk_size):
-            chunk = text[i:i + max_chunk_size]
-            if len(chunk.strip()) > 100:  # Only process chunks with sufficient content
-                chunks.append(chunk.strip())
+        # Extract key concepts for better question generation
+        key_concepts = extract_key_concepts(text)
         
-        if not chunks:
-            logger.warning("No valid text chunks found for flashcard generation")
-            return generate_simple_flashcards(text, language)
-        
-        flashcards = []
-        
-        for chunk in chunks:
-            # Create a clear, structured prompt for the model
-            if language == "en":
-                prompt = f"""Generate 2-3 flashcards from this text. For each flashcard, provide:
-Question: [Write a clear question about a key concept]
-Answer: [Provide a concise answer]
-
-Text: {chunk}
-
-Generate flashcards:"""
-            elif language == "si":
-                prompt = f"""Generate 2-3 flashcards from this text in Sinhala. For each flashcard, provide:
-Question: [Write a clear question about a key concept in Sinhala]
-Answer: [Provide a concise answer in Sinhala]
-
-Text: {chunk}
-
-Generate flashcards:"""
-            elif language == "ta":
-                prompt = f"""Generate 2-3 flashcards from this text in Tamil. For each flashcard, provide:
-Question: [Write a clear question about a key concept in Tamil]
-Answer: [Provide a concise answer in Tamil]
-
-Text: {chunk}
-
-Generate flashcards:"""
-            else:
-                prompt = f"""Generate 2-3 flashcards from this text. For each flashcard, provide:
-Question: [Write a clear question about a key concept]
-Answer: [Provide a concise answer]
-
-Text: {chunk}
-
-Generate flashcards:"""
-            
-            try:
-                # Tokenize the input
-                inputs = tokenizer(
-                    prompt, 
-                    return_tensors="pt", 
-                    max_length=1024, 
-                    truncation=True,
-                    padding=True
-                )
-                
-                # Generate response
-                with torch.no_grad():
-                    outputs = model.generate(
-                        inputs["input_ids"],
-                        max_length=400,
-                        num_return_sequences=1,
-                        temperature=0.7,
-                        top_p=0.9,
-                        do_sample=True,
-                        pad_token_id=tokenizer.eos_token_id,
-                        eos_token_id=tokenizer.eos_token_id,
-                        no_repeat_ngram_size=2
-                    )
-                
-                # Decode the generated text
-                generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-                
-                # Extract the generated part (after the prompt)
-                if "Generate flashcards:" in generated_text:
-                    generated_part = generated_text.split("Generate flashcards:")[-1].strip()
-                else:
-                    generated_part = generated_text.strip()
-                
-                # Parse the generated flashcards
-                flashcard_blocks = generated_part.split("Question:")
-                
-                for block in flashcard_blocks[1:]:  # Skip the first empty block
-                    if "Answer:" in block:
-                        try:
-                            # Split by "Answer:" to separate question and answer
-                            parts = block.split("Answer:", 1)
-                            if len(parts) == 2:
-                                question = parts[0].strip()
-                                answer = parts[1].strip()
-                                
-                                # Clean up the question and answer
-                                question = question.strip()
-                                answer = answer.strip()
-                                
-                                # Remove any remaining formatting
-                                question = re.sub(r'^\d+\.\s*', '', question)  # Remove numbering
-                                answer = re.sub(r'^\d+\.\s*', '', answer)      # Remove numbering
-                                
-                                # Validate that we have meaningful content
-                                if (len(question) > 10 and len(answer) > 5 and 
-                                    not question.startswith("<") and not answer.startswith("<") and
-                                    "Question:" not in question and "Answer:" not in answer):
-                                    
-                                    flashcards.append({
-                                        "question": question,
-                                        "answer": answer,
-                                        "type": "Q&A",
-                                        "difficulty": difficulty
-                                    })
-                        except Exception as parse_error:
-                            logger.warning(f"Failed to parse flashcard block: {block[:100]}... Error: {str(parse_error)}")
-                            continue
-                    
-            except Exception as chunk_error:
-                logger.warning(f"Error processing chunk: {str(chunk_error)}")
-                continue
-        
-        # If model-generated flashcards are insufficient, use fallback
-        if len(flashcards) < 3:
-            logger.info("Model generated insufficient flashcards, trying pipeline method")
-            pipeline_flashcards = generate_flashcards_with_pipeline(text, language)
-            if pipeline_flashcards:
-                flashcards.extend(pipeline_flashcards)
-            else:
-                logger.info("Pipeline method failed, using simple fallback")
-                fallback_flashcards = generate_simple_flashcards(text, language)
-                flashcards.extend(fallback_flashcards)
-        
-        # Remove duplicates based on question content
-        unique_flashcards = []
-        seen_questions = set()
-        for card in flashcards:
-            question_key = card["question"][:50].lower()  # Use first 50 chars as key
-            if question_key not in seen_questions:
-                seen_questions.add(question_key)
-                unique_flashcards.append(card)
-        
-        # Limit total flashcards
-        if len(unique_flashcards) > 10:
-            unique_flashcards = unique_flashcards[:10]
-        
-        logger.info(f"Successfully generated {len(unique_flashcards)} flashcards using Flan-T5 model")
-        return unique_flashcards
-        
-    except Exception as e:
-        error_msg = f"Error generating flashcards: {str(e)}"
-        logger.error(error_msg, exc_info=True)
-        # Try pipeline method first, then fallback
-        logger.info("Attempting pipeline flashcard generation")
-        pipeline_flashcards = generate_flashcards_with_pipeline(text, language)
-        if pipeline_flashcards:
-            return pipeline_flashcards
-        else:
-            logger.info("Pipeline method failed, using simple fallback")
-            return generate_simple_flashcards(text, language)
-
-def generate_flashcards_with_pipeline(text: str, language: str = "en") -> List[Dict[str, Any]]:
-    """Generate flashcards using the question generation pipeline."""
-    if question_generator is None:
-        return []
-    
-    try:
-        # Split text into sentences
+        # Split text into meaningful chunks
         sentences = [s.strip() for s in text.split('.') if len(s.strip()) > 30]
+        chunks = []
+        current_chunk = ""
+        
+        for sentence in sentences:
+            if len(current_chunk + sentence) > 600:
+                if current_chunk:
+                    chunks.append(current_chunk.strip())
+                current_chunk = sentence
+            else:
+                current_chunk += ". " + sentence if current_chunk else sentence
+        
+        if current_chunk:
+            chunks.append(current_chunk.strip())
         
         flashcards = []
-        for sentence in sentences[:5]:  # Limit to 5 sentences
+        
+        # Language-specific prompts
+        prompts = {
+            "en": "Create a clear question and answer from this text:\n\nText: {}\n\nQuestion:",
+            "si": "මෙම පෙළෙන් පැහැදිලි ප්‍රශ්නයක් සහ පිළිතුරක් සාදන්න:\n\nපෙළ: {}\n\nප්‍රශ්නය:",
+            "ta": "இந்த உரையிலிருந்து தெளிவான கேள்வி மற்றும் பதிலை உருவாக்கவும்:\n\nஉரை: {}\n\nகேள்வி:"
+        }
+        
+        base_prompt = prompts.get(language, prompts["en"])
+        
+        for i, chunk in enumerate(chunks[:5]):  # Limit to 5 chunks
             try:
-                # Generate a question from the sentence
-                if language == "en":
-                    prompt = f"Generate a question about this: {sentence}"
-                elif language == "si":
-                    prompt = f"Generate a question in Sinhala about this: {sentence}"
-                elif language == "ta":
-                    prompt = f"Generate a question in Tamil about this: {sentence}"
+                # Use key concepts to generate focused questions
+                if key_concepts and i < len(key_concepts):
+                    concept = key_concepts[i]
+                    focused_prompt = f"{base_prompt.format(chunk)} What is {concept}?"
                 else:
-                    prompt = f"Generate a question about this: {sentence}"
+                    focused_prompt = base_prompt.format(chunk)
                 
-                result = question_generator(prompt, max_length=100, num_return_sequences=1)
-                question = result[0]['generated_text'].strip()
+                generated = generate_with_model(focused_prompt, max_length=150)
                 
-                # Clean up the question
-                question = re.sub(r'^\d+\.\s*', '', question)  # Remove numbering
-                
-                if len(question) > 10 and not question.startswith("<"):
-                    flashcards.append({
-                        "question": question,
-                        "answer": sentence,
-                        "type": "Q&A",
-                        "difficulty": "Medium"
-                    })
+                if generated and len(generated.strip()) > 10:
+                    # Try to parse question and answer
+                    lines = generated.strip().split('\n')
+                    question = ""
+                    answer = ""
                     
+                    for line in lines:
+                        line = line.strip()
+                        if line.startswith(('Question:', 'ප්‍රශ්නය:', 'கேள்வி:')):
+                            question = line.split(':', 1)[1].strip()
+                        elif line.startswith(('Answer:', 'පිළිතුර:', 'பதில்:')):
+                            answer = line.split(':', 1)[1].strip()
+                        elif not question and len(line) > 10 and line.endswith('?'):
+                            question = line
+                        elif question and not answer and len(line) > 10:
+                            answer = line
+                    
+                    # If parsing failed, create from the chunk
+                    if not question:
+                        if language == "si":
+                            question = f"මෙම කරුණ ගැන කුමක් කිව හැකිද: {chunk[:100]}...?"
+                        elif language == "ta":
+                            question = f"இந்த விஷயத்தைப் பற்றி என்ன சொல்லலாம்: {chunk[:100]}...?"
+                        else:
+                            question = f"What can you tell me about: {chunk[:100]}...?"
+                    
+                    if not answer:
+                        answer = chunk[:200] + "..." if len(chunk) > 200 else chunk
+                    
+                    # Clean up and validate
+                    question = re.sub(r'\s+', ' ', question).strip()
+                    answer = re.sub(r'\s+', ' ', answer).strip()
+                    
+                    if len(question) > 10 and len(answer) > 10:
+                        flashcards.append({
+                            "question": question,
+                            "answer": answer,
+                            "type": "Q&A",
+                            "difficulty": difficulty
+                        })
+                        
             except Exception as e:
-                logger.warning(f"Error generating question for sentence: {str(e)}")
+                logger.warning(f"Error generating flashcard for chunk {i}: {str(e)}")
                 continue
         
-        return flashcards
+        # If model failed, generate rule-based flashcards
+        if not flashcards:
+            flashcards = generate_rule_based_flashcards(text, language, difficulty)
+        
+        logger.info(f"Generated {len(flashcards)} flashcards")
+        return flashcards[:10]  # Limit to 10
+        
     except Exception as e:
-        logger.error(f"Error in pipeline flashcard generation: {str(e)}")
-        return []
+        logger.error(f"Error generating flashcards: {str(e)}")
+        return generate_rule_based_flashcards(text, language, difficulty)
 
-def generate_simple_quizzes(text: str, language: str = "en") -> List[Dict[str, Any]]:
-    """Generate simple quizzes using text processing when model fails."""
+def generate_rule_based_flashcards(text: str, language: str, difficulty: str) -> List[Dict[str, Any]]:
+    """Generate flashcards using rule-based approach when model fails."""
+    flashcards = []
+    sentences = [s.strip() for s in text.split('.') if len(s.strip()) > 20]
+    key_concepts = extract_key_concepts(text)
+    
+    for i, sentence in enumerate(sentences[:8]):
+        try:
+            if language == "si":
+                question = f"'{sentence[:50]}...' යන්නෙන් අදහස් කරන්නේ කුමක්ද?"
+            elif language == "ta":
+                question = f"'{sentence[:50]}...' என்பதன் பொருள் என்ன?"
+            else:
+                question = f"What does '{sentence[:50]}...' refer to?"
+            
+            flashcards.append({
+                "question": question,
+                "answer": sentence,
+                "type": "Q&A",
+                "difficulty": difficulty
+            })
+        except Exception as e:
+            continue
+    
+    return flashcards
+
+def generate_quizzes(text: str, language: str = "en", difficulty: str = "beginner") -> List[Dict[str, Any]]:
+    """Generate multiple choice quizzes with improved accuracy."""
     try:
-        sentences = [s.strip() for s in text.split('.') if len(s.strip()) > 20]
+        text = text.strip()
+        if len(text) < 100:
+            return []
+        
+        sentences = [s.strip() for s in text.split('.') if len(s.strip()) > 30]
+        key_concepts = extract_key_concepts(text)
         quizzes = []
-        for i, sentence in enumerate(sentences[:5]):
-            words = sentence.split()
-            if len(words) > 6:
-                # Use the first 5 words as the question context
-                question = f"Which of the following best completes: {' '.join(words[:5])}... ?"
-                # Create 4 options: 1 correct (the sentence), 3 distractors (other sentences)
-                distractors = [s for j, s in enumerate(sentences) if j != i and len(s.split()) > 6][:3]
-                options = distractors + [sentence]
-                import random
+        
+        # Generate quiz prompts
+        quiz_prompts = {
+            "en": "Create a multiple choice question with 4 options from this text:\n\nText: {}\n\nQuestion: ",
+            "si": "මෙම පෙළෙන් විකල්ප 4ක් සහිත බහුවරණ ප්‍රශ්නයක් සාදන්න:\n\nපෙළ: {}\n\nප්‍රශ්නය: ",
+            "ta": "இந்த உரையிலிருந்து 4 விருப்பங்களுடன் பல தேர்வு கேள்வியை உருவாக்கவும்:\n\nஉரை: {}\n\nகேள்வி: "
+        }
+        
+        base_prompt = quiz_prompts.get(language, quiz_prompts["en"])
+        
+        for i, sentence in enumerate(sentences[:6]):
+            try:
+                if len(sentence.split()) < 8:
+                    continue
+                
+                # Generate question using model
+                prompt = base_prompt.format(sentence)
+                generated = generate_with_model(prompt, max_length=200)
+                
+                # Create options: 1 correct, 3 distractors
+                correct_answer = sentence
+                distractors = []
+                
+                # Get other sentences as distractors
+                other_sentences = [s for j, s in enumerate(sentences) if j != i and len(s.split()) > 5]
+                random.shuffle(other_sentences)
+                distractors = other_sentences[:3]
+                
+                # If not enough distractors, create some
+                while len(distractors) < 3:
+                    if language == "si":
+                        distractors.append(f"වෙනත් සාධාරණ තොරතුර {len(distractors) + 1}")
+                    elif language == "ta":
+                        distractors.append(f"பிற பொதுவான தகவல் {len(distractors) + 1}")
+                    else:
+                        distractors.append(f"Other general information {len(distractors) + 1}")
+                
+                options = distractors + [correct_answer]
                 random.shuffle(options)
-                correct_option = sentence
+                
+                # Generate question
+                words = sentence.split()
+                if language == "si":
+                    question = f"පහත සඳහන් කුමන කාරණය සත්‍ය ද? {' '.join(words[:8])}... ගැන"
+                elif language == "ta":
+                    question = f"பின்வருவனவற்றில் எது உண்மை? {' '.join(words[:8])}... பற்றி"
+                else:
+                    question = f"Which of the following is true about: {' '.join(words[:8])}...?"
+                
                 quizzes.append({
                     "question": question,
                     "options": options,
-                    "answer": correct_option,
-                    "correct_answer_option": correct_option,
+                    "answer": correct_answer,
+                    "correct_answer_option": correct_answer,
                     "type": "quiz",
-                    "difficulty": "Easy"
+                    "difficulty": difficulty
                 })
-        return quizzes
+                
+            except Exception as e:
+                logger.warning(f"Error generating quiz {i}: {str(e)}")
+                continue
+        
+        logger.info(f"Generated {len(quizzes)} quizzes")
+        return quizzes[:8]  # Limit to 8
+        
     except Exception as e:
-        logger.error(f"Error in simple quiz generation: {str(e)}")
+        logger.error(f"Error generating quizzes: {str(e)}")
         return []
 
-def generate_quizzes(text: str, language: str = "en", difficulty: str = "beginner") -> List[Dict[str, Any]]:
-    """Generate quizzes (MCQs) from text using Flan-T5 model with proper prompting."""
+def generate_exercises(text: str, language: str = "en", difficulty: str = "beginner") -> List[Dict[str, Any]]:
+    """Generate various types of exercises from text."""
     try:
         text = text.strip()
         if len(text) < 50:
-            logger.warning("Text is too short to generate meaningful quizzes")
             return []
-        max_chunk_size = 800
-        chunks = []
-        for i in range(0, len(text), max_chunk_size):
-            chunk = text[i:i + max_chunk_size]
-            if len(chunk.strip()) > 100:
-                chunks.append(chunk.strip())
-        if not chunks:
-            logger.warning("No valid text chunks found for quiz generation")
-            return generate_simple_quizzes(text, language)
-        quizzes = []
-        for chunk in chunks:
-            if language == "en":
-                prompt = f"""Generate 2-3 multiple choice quiz questions from this text. For each quiz, provide:\nQuestion: [Write a clear MCQ]\nOptions: [List 4 options separated by semicolons]\nCorrect Option: [The correct option text]\nAnswer: [Short explanation or correct answer]\n\nText: {chunk}\n\nGenerate quizzes:"""
-            elif language == "si":
-                prompt = f"""Generate 2-3 multiple choice quiz questions from this text in Sinhala. For each quiz, provide:\nQuestion: [Write a clear MCQ in Sinhala]\nOptions: [List 4 options separated by semicolons in Sinhala]\nCorrect Option: [The correct option text in Sinhala]\nAnswer: [Short explanation or correct answer in Sinhala]\n\nText: {chunk}\n\nGenerate quizzes:"""
-            elif language == "ta":
-                prompt = f"""Generate 2-3 multiple choice quiz questions from this text in Tamil. For each quiz, provide:\nQuestion: [Write a clear MCQ in Tamil]\nOptions: [List 4 options separated by semicolons in Tamil]\nCorrect Option: [The correct option text in Tamil]\nAnswer: [Short explanation or correct answer in Tamil]\n\nText: {chunk}\n\nGenerate quizzes:"""
-            else:
-                prompt = f"""Generate 2-3 multiple choice quiz questions from this text. For each quiz, provide:\nQuestion: [Write a clear MCQ]\nOptions: [List 4 options separated by semicolons]\nCorrect Option: [The correct option text]\nAnswer: [Short explanation or correct answer]\n\nText: {chunk}\n\nGenerate quizzes:"""
+        
+        exercises = []
+        sentences = [s.strip() for s in text.split('.') if len(s.strip()) > 20]
+        key_concepts = extract_key_concepts(text)
+        
+        # Exercise Type 1: Fill in the blanks
+        for i, sentence in enumerate(sentences[:3]):
             try:
-                inputs = tokenizer(
-                    prompt,
-                    return_tensors="pt",
-                    max_length=1024,
-                    truncation=True,
-                    padding=True
-                )
-                with torch.no_grad():
-                    outputs = model.generate(
-                        inputs["input_ids"],
-                        max_length=400,
-                        num_return_sequences=1,
-                        temperature=0.7,
-                        top_p=0.9,
-                        do_sample=True,
-                        pad_token_id=tokenizer.eos_token_id,
-                        eos_token_id=tokenizer.eos_token_id,
-                        no_repeat_ngram_size=2
-                    )
-                generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-                if "Generate quizzes:" in generated_text:
-                    generated_part = generated_text.split("Generate quizzes:")[-1].strip()
-                else:
-                    generated_part = generated_text.strip()
-                quiz_blocks = generated_part.split("Question:")
-                for block in quiz_blocks[1:]:
-                    try:
-                        if "Options:" in block and "Correct Option:" in block and "Answer:" in block:
-                            q_part, rest = block.split("Options:", 1)
-                            o_part, rest2 = rest.split("Correct Option:", 1)
-                            c_part, a_part = rest2.split("Answer:", 1)
-                            question = q_part.strip()
-                            options = [opt.strip() for opt in o_part.strip().split(';') if opt.strip()]
-                            correct_option = c_part.strip().split('\n')[0].strip()
-                            answer = a_part.strip().split('\n')[0].strip()
-                            if (len(question) > 10 and len(options) == 4 and correct_option in options):
-                                quizzes.append({
-                                    "question": question,
-                                    "options": options,
-                                    "answer": answer,
-                                    "correct_answer_option": correct_option,
-                                    "type": "quiz",
-                                    "difficulty": difficulty
-                                })
-                    except Exception as parse_error:
-                        logger.warning(f"Failed to parse quiz block: {block[:100]}... Error: {str(parse_error)}")
-                        continue
-            except Exception as chunk_error:
-                logger.warning(f"Error processing quiz chunk: {str(chunk_error)}")
+                words = sentence.split()
+                if len(words) > 8:
+                    # Remove important words (nouns, adjectives)
+                    important_words = [w for w in words if len(w) > 4 and w.isalpha()]
+                    if important_words:
+                        word_to_blank = random.choice(important_words)
+                        exercise_text = sentence.replace(word_to_blank, "______")
+                        
+                        if language == "si":
+                            instruction = "පහත වාක්‍යයේ හිස් තැන පුරවන්න:"
+                        elif language == "ta":
+                            instruction = "பின்வரும் வாக््यத்தில் காली இடத்தை நிரப்பவும்:"
+                        else:
+                            instruction = "Fill in the blank in the following sentence:"
+                        
+                        exercises.append({
+                            "type": "fill_blank",
+                            "instruction": instruction,
+                            "exercise_text": exercise_text,
+                            "answer": word_to_blank,
+                            "difficulty": difficulty
+                        })
+            except Exception as e:
                 continue
-        if len(quizzes) < 2:
-            logger.info("Model generated insufficient quizzes, using simple fallback")
-            fallback_quizzes = generate_simple_quizzes(text, language)
-            quizzes.extend(fallback_quizzes)
-        unique_quizzes = []
-        seen_questions = set()
-        for quiz in quizzes:
-            question_key = quiz["question"][:50].lower()
-            if question_key not in seen_questions:
-                seen_questions.add(question_key)
-                unique_quizzes.append(quiz)
-        if len(unique_quizzes) > 10:
-            unique_quizzes = unique_quizzes[:10]
-        logger.info(f"Successfully generated {len(unique_quizzes)} quizzes using Flan-T5 model")
-        return unique_quizzes
+        
+        # Exercise Type 2: True/False
+        for i, sentence in enumerate(sentences[3:6]):
+            try:
+                if language == "si":
+                    instruction = "පහත ප්‍රකාශනය සත්‍ය ද අසත්‍ය ද?"
+                elif language == "ta":
+                    instruction = "பின்வரும் கூற்று உண்மையா பொய்யா?"
+                else:
+                    instruction = "Is the following statement true or false?"
+                
+                exercises.append({
+                    "type": "true_false",
+                    "instruction": instruction,
+                    "exercise_text": sentence,
+                    "answer": "True",  # Assuming text content is factual
+                    "difficulty": difficulty
+                })
+            except Exception as e:
+                continue
+        
+        # Exercise Type 3: Short Answer
+        for concept in key_concepts[:2]:
+            try:
+                if language == "si":
+                    question = f"'{concept}' ගැන කෙටියෙන් පැහැදිලි කරන්න."
+                elif language == "ta":
+                    question = f"'{concept}' பற்றி சுருக்கமாக விளக்கவும்."
+                else:
+                    question = f"Briefly explain '{concept}'."
+                
+                # Find relevant sentence containing the concept
+                relevant_sentence = next((s for s in sentences if concept.lower() in s.lower()), sentences[0])
+                
+                exercises.append({
+                    "type": "short_answer",
+                    "instruction": "Answer the following question:",
+                    "exercise_text": question,
+                    "answer": relevant_sentence,
+                    "difficulty": difficulty
+                })
+            except Exception as e:
+                continue
+        
+        # Exercise Type 4: Matching (if enough concepts)
+        if len(key_concepts) >= 4:
+            try:
+                # Create matching pairs
+                concepts_subset = key_concepts[:4]
+                definitions = []
+                
+                for concept in concepts_subset:
+                    # Find sentence containing the concept
+                    definition = next((s for s in sentences if concept.lower() in s.lower()), f"Related to {concept}")
+                    definitions.append(definition[:100] + "..." if len(definition) > 100 else definition)
+                
+                if language == "si":
+                    instruction = "පහත සංකල්ප සහ අර්ථ දැක්වීම් ගලපන්න:"
+                elif language == "ta":
+                    instruction = "பின்வரும் கருத்துகள் மற்றும் வரையறைகளை பொருத்தவும்:"
+                else:
+                    instruction = "Match the following concepts with their definitions:"
+                
+                exercises.append({
+                    "type": "matching",
+                    "instruction": instruction,
+                    "concepts": concepts_subset,
+                    "definitions": definitions,
+                    "answer": dict(zip(concepts_subset, definitions)),
+                    "difficulty": difficulty
+                })
+            except Exception as e:
+                logger.warning(f"Error creating matching exercise: {str(e)}")
+        
+        logger.info(f"Generated {len(exercises)} exercises")
+        return exercises
+        
     except Exception as e:
-        error_msg = f"Error generating quizzes: {str(e)}"
-        logger.error(error_msg, exc_info=True)
-        return generate_simple_quizzes(text, language)
+        logger.error(f"Error generating exercises: {str(e)}")
+        return []
 
 def get_card_types(card_types: Optional[List[str]] = Form(None)):
     return card_types or ["flashcard"]
@@ -537,7 +598,6 @@ async def process_file(
     card_types: List[str] = Depends(get_card_types),
     difficulty: str = Form("beginner")
 ):
-    print(">>> /process-file endpoint was called")
     """
     Process uploaded document and generate flashcards, exercises, and quizzes.
     
@@ -550,105 +610,90 @@ async def process_file(
     Returns:
         JSON response containing generated content
     """
-    logger.debug("/process-file endpoint called")
-    logger.debug(f"Received parameters: file={file.filename}, language={language}, card_types={card_types}, difficulty={difficulty}")
+    logger.info(f"Processing file: {file.filename}")
+    logger.debug(f"Parameters: language={language}, card_types={card_types}, difficulty={difficulty}")
+    
     try:
+        # Validate parameters
         if language not in ["en", "si", "ta"]:
-            error_msg = f"Unsupported language: {language}"
-            logger.error(error_msg)
             raise HTTPException(status_code=400, detail="Unsupported language")
         
-        # Set defaults if not provided
         card_types_list = [ct for ct in card_types if ct in ["flashcard", "exercise", "quiz"]]
         if not card_types_list:
             card_types_list = ["flashcard"]
+        
         if difficulty not in ["beginner", "intermediate", "advanced"]:
             difficulty = "beginner"
         
-        # Read file content
-        logger.debug("Reading file content...")
+        # Read and process file
         content = await file.read()
-        
-        # Determine file type and extract text
-        logger.debug("Detecting file type...")
         file_extension = file.filename.split(".")[-1].lower()
-        text = ""
         
-        logger.debug(f"File extension detected: {file_extension}")
+        # Extract text based on file type
         if file_extension == "pdf":
-            logger.debug("Extracting text from PDF...")
             text = extract_text_from_pdf(content)
         elif file_extension == "docx":
-            logger.debug("Extracting text from DOCX...")
             text = extract_text_from_docx(content)
         elif file_extension == "pptx":
-            logger.debug("Extracting text from PPTX...")
             text = extract_text_from_pptx(content)
         else:
-            error_msg = f"Unsupported file type: {file_extension}"
-            logger.error(error_msg)
             raise HTTPException(status_code=400, detail="Unsupported file type")
         
         if not text.strip():
-            error_msg = "No text content found in the document"
-            logger.error(error_msg)
             raise HTTPException(status_code=400, detail="No text content found in the document")
         
+        # Generate requested content types
         generated_content = {}
+        
         if "flashcard" in card_types_list:
-            logger.debug("Generating flashcards...")
+            logger.info("Generating flashcards...")
             flashcards = generate_flashcards(text, language, difficulty)
             generated_content["flashcards"] = flashcards
+        
         if "quiz" in card_types_list:
-            logger.debug("Generating quizzes...")
+            logger.info("Generating quizzes...")
             quizzes = generate_quizzes(text, language, difficulty)
             generated_content["quizzes"] = quizzes
+        
         if "exercise" in card_types_list:
-            logger.debug("Generating exercises...")
+            logger.info("Generating exercises...")
             exercises = generate_exercises(text, language, difficulty)
             generated_content["exercises"] = exercises
         
-        logger.info(f"Successfully processed file {file.filename} and generated content: {list(generated_content.keys())}")
-        logger.debug(f"Response: {{'generated_content': {generated_content}}}")
+        logger.info(f"Successfully processed {file.filename}. Generated: {list(generated_content.keys())}")
         return {"generated_content": generated_content}
         
-    except HTTPException as http_exc:
-        logger.debug(f"HTTPException raised: {http_exc.detail}")
+    except HTTPException:
         raise
     except Exception as e:
-        error_msg = f"Unexpected error processing file {file.filename}: {str(e)}"
-        logger.error(error_msg, exc_info=True)
-        logger.debug(f"Exception details: {str(e)}")
+        logger.error(f"Unexpected error processing {file.filename}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
-# Stub for exercise generation
-def generate_exercises(text: str, language: str = "en", difficulty: str = "beginner") -> List[Dict[str, Any]]:
-    """Stub for exercise generation. Returns an empty list for now."""
-    logger.info(f"Exercise generation is not implemented yet. Returning empty list.")
-    return []
+# Add health check endpoint
+@app.get("/health")
+async def health_check():
+    """Health check endpoint."""
+    return {
+        "status": "healthy",
+        "model": current_model_name,
+        "timestamp": datetime.now().isoformat()
+    }
 
-# Add middleware to log all requests and responses
+# Add middleware to log requests
 @app.middleware("http")
 async def log_requests(request, call_next):
     start_time = datetime.now()
-    
-    # Log request
     logger.info(f"Request: {request.method} {request.url}")
     
     try:
         response = await call_next(request)
-        
-        # Log response
         process_time = (datetime.now() - start_time).total_seconds()
-        logger.info(f"Response: {response.status_code} - Processed in {process_time:.3f}s")
-        
+        logger.info(f"Response: {response.status_code} - {process_time:.3f}s")
         return response
     except Exception as e:
-        # Log any unhandled exceptions
-        error_msg = f"Unhandled exception in request {request.method} {request.url}: {str(e)}"
-        logger.error(error_msg, exc_info=True)
+        logger.error(f"Request failed: {str(e)}", exc_info=True)
         raise
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8001) 
+    uvicorn.run(app, host="0.0.0.0", port=8001)
