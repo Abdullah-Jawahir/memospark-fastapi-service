@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
 import fitz  # PyMuPDF
 from docx import Document as DocxDocument
@@ -6,12 +6,15 @@ from pptx import Presentation
 import io
 from transformers import pipeline, AutoTokenizer, AutoModelForSeq2SeqLM
 import torch
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import logging
 import os
 from pathlib import Path
 from datetime import datetime
 import re
+from fastapi import Request
+from fastapi import Query
+from fastapi import APIRouter
 
 # Configure logging with file handler
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -20,7 +23,7 @@ LOG_DIR.mkdir(exist_ok=True)
 
 # Create a logger
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 
 # Create file handler
 log_file = LOG_DIR / f"fastapi_errors_{datetime.now().strftime('%Y%m%d')}.log"
@@ -184,7 +187,7 @@ def generate_simple_flashcards(text: str, language: str = "en") -> List[Dict[str
         logger.error(f"Error in simple flashcard generation: {str(e)}")
         return []
 
-def generate_flashcards(text: str, language: str = "en") -> List[Dict[str, Any]]:
+def generate_flashcards(text: str, language: str = "en", difficulty: str = "beginner") -> List[Dict[str, Any]]:
     """Generate flashcards from text using Flan-T5 model with proper prompting."""
     try:
         # Clean and prepare the text
@@ -304,7 +307,7 @@ Generate flashcards:"""
                                         "question": question,
                                         "answer": answer,
                                         "type": "Q&A",
-                                        "difficulty": "Medium"
+                                        "difficulty": difficulty
                                     })
                         except Exception as parse_error:
                             logger.warning(f"Failed to parse flashcard block: {block[:100]}... Error: {str(parse_error)}")
@@ -427,7 +430,7 @@ def generate_simple_quizzes(text: str, language: str = "en") -> List[Dict[str, A
         logger.error(f"Error in simple quiz generation: {str(e)}")
         return []
 
-def generate_quizzes(text: str, language: str = "en") -> List[Dict[str, Any]]:
+def generate_quizzes(text: str, language: str = "en", difficulty: str = "beginner") -> List[Dict[str, Any]]:
     """Generate quizzes (MCQs) from text using Flan-T5 model with proper prompting."""
     try:
         text = text.strip()
@@ -496,7 +499,7 @@ def generate_quizzes(text: str, language: str = "en") -> List[Dict[str, Any]]:
                                     "answer": answer,
                                     "correct_answer_option": correct_option,
                                     "type": "quiz",
-                                    "difficulty": "Medium"
+                                    "difficulty": difficulty
                                 })
                     except Exception as parse_error:
                         logger.warning(f"Failed to parse quiz block: {block[:100]}... Error: {str(parse_error)}")
@@ -524,39 +527,62 @@ def generate_quizzes(text: str, language: str = "en") -> List[Dict[str, Any]]:
         logger.error(error_msg, exc_info=True)
         return generate_simple_quizzes(text, language)
 
+def get_card_types(card_types: Optional[List[str]] = Form(None)):
+    return card_types or ["flashcard"]
+
 @app.post("/process-file")
-async def process_file(file: UploadFile = File(...), language: str = "en"):
+async def process_file(
+    file: UploadFile = File(...),
+    language: str = Form("en"),
+    card_types: List[str] = Depends(get_card_types),
+    difficulty: str = Form("beginner")
+):
+    print(">>> /process-file endpoint was called")
     """
-    Process uploaded document and generate flashcards and quizzes.
+    Process uploaded document and generate flashcards, exercises, and quizzes.
     
     Args:
         file: The uploaded file (PDF, DOCX, or PPTX)
         language: The language of the document (en, si, ta)
+        card_types: List of card types to generate (flashcard, exercise, quiz)
+        difficulty: The difficulty level (beginner, intermediate, advanced)
     
     Returns:
-        JSON response containing generated flashcards and quizzes
+        JSON response containing generated content
     """
-    # Log request details
-    logger.info(f"Processing file: {file.filename}, language: {language}, size: {file.size} bytes")
-    
+    logger.debug("/process-file endpoint called")
+    logger.debug(f"Received parameters: file={file.filename}, language={language}, card_types={card_types}, difficulty={difficulty}")
     try:
         if language not in ["en", "si", "ta"]:
             error_msg = f"Unsupported language: {language}"
             logger.error(error_msg)
             raise HTTPException(status_code=400, detail="Unsupported language")
         
+        # Set defaults if not provided
+        card_types_list = [ct for ct in card_types if ct in ["flashcard", "exercise", "quiz"]]
+        if not card_types_list:
+            card_types_list = ["flashcard"]
+        if difficulty not in ["beginner", "intermediate", "advanced"]:
+            difficulty = "beginner"
+        
         # Read file content
+        logger.debug("Reading file content...")
         content = await file.read()
         
         # Determine file type and extract text
+        logger.debug("Detecting file type...")
         file_extension = file.filename.split(".")[-1].lower()
         text = ""
         
+        logger.debug(f"File extension detected: {file_extension}")
         if file_extension == "pdf":
+            logger.debug("Extracting text from PDF...")
             text = extract_text_from_pdf(content)
         elif file_extension == "docx":
+            logger.debug("Extracting text from DOCX...")
             text = extract_text_from_docx(content)
         elif file_extension == "pptx":
+            logger.debug("Extracting text from PPTX...")
             text = extract_text_from_pptx(content)
         else:
             error_msg = f"Unsupported file type: {file_extension}"
@@ -568,22 +594,38 @@ async def process_file(file: UploadFile = File(...), language: str = "en"):
             logger.error(error_msg)
             raise HTTPException(status_code=400, detail="No text content found in the document")
         
-        # Generate flashcards
-        flashcards = generate_flashcards(text, language)
+        generated_content = {}
+        if "flashcard" in card_types_list:
+            logger.debug("Generating flashcards...")
+            flashcards = generate_flashcards(text, language, difficulty)
+            generated_content["flashcards"] = flashcards
+        if "quiz" in card_types_list:
+            logger.debug("Generating quizzes...")
+            quizzes = generate_quizzes(text, language, difficulty)
+            generated_content["quizzes"] = quizzes
+        if "exercise" in card_types_list:
+            logger.debug("Generating exercises...")
+            exercises = generate_exercises(text, language, difficulty)
+            generated_content["exercises"] = exercises
         
-        # Generate quizzes
-        quizzes = generate_quizzes(text, language)
+        logger.info(f"Successfully processed file {file.filename} and generated content: {list(generated_content.keys())}")
+        logger.debug(f"Response: {{'generated_content': {generated_content}}}")
+        return {"generated_content": generated_content}
         
-        logger.info(f"Successfully processed file {file.filename} and generated {len(flashcards)} flashcards and {len(quizzes)} quizzes")
-        return {"generated_content": {"flashcards": flashcards, "quizzes": quizzes}}
-        
-    except HTTPException:
-        # Re-raise HTTP exceptions as they are already logged
+    except HTTPException as http_exc:
+        logger.debug(f"HTTPException raised: {http_exc.detail}")
         raise
     except Exception as e:
         error_msg = f"Unexpected error processing file {file.filename}: {str(e)}"
         logger.error(error_msg, exc_info=True)
+        logger.debug(f"Exception details: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+# Stub for exercise generation
+def generate_exercises(text: str, language: str = "en", difficulty: str = "beginner") -> List[Dict[str, Any]]:
+    """Stub for exercise generation. Returns an empty list for now."""
+    logger.info(f"Exercise generation is not implemented yet. Returning empty list.")
+    return []
 
 # Add middleware to log all requests and responses
 @app.middleware("http")
