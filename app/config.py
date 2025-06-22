@@ -1,6 +1,10 @@
 import os
 from pathlib import Path
 from typing import Dict, Any
+from dotenv import load_dotenv
+
+# Load environment variables from .env if present
+load_dotenv()
 
 # Project root and directories
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -16,6 +20,11 @@ os.environ['TRANSFORMERS_CACHE'] = str(CACHE_DIR)
 os.environ['HF_HOME'] = str(CACHE_DIR)
 os.environ['HF_DATASETS_CACHE'] = str(CACHE_DIR)
 
+# OpenRouter API config
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_MODEL = "deepseek/deepseek-chat-v3-0324:free"
+
 # Model configurations
 MODEL_CONFIGS = {
     "question_generation": {
@@ -30,6 +39,10 @@ MODEL_CONFIGS = {
 
 # Models to try in order of preference
 MODELS_TO_TRY = [
+    "deepseek-ai/deepseek-coder-6.7b-instruct",
+    "deepseek-ai/deepseek-llm-7b-chat",
+    "microsoft/DialoGPT-large",
+    "google/flan-t5-large",
     "google/flan-t5-base",
     "microsoft/DialoGPT-medium",
     "google/flan-t5-small",
@@ -64,8 +77,10 @@ GENERATION_LIMITS = {
 
 # Model generation parameters
 GENERATION_PARAMS = {
-    "max_length": 200,
-    "temperature": 0.7,
+    "max_length": 400,
+    "temperature": 0.8,
     "top_p": 0.9,
-    "no_repeat_ngram_size": 2
+    "no_repeat_ngram_size": 3,
+    "do_sample": True,
+    "top_k": 50
 } 
