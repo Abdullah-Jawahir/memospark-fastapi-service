@@ -13,9 +13,12 @@ class ExerciseGenerator:
             if len(text) < 50:
                 return []
             
-            exercises = []
-            sentences = [s.strip() for s in text.split('.') if len(s.strip()) > 20]
+            # Improved: Only use sentences that are long enough and end with a period or are likely complete
+            raw_sentences = [s.strip() for s in text.split('.') if len(s.strip()) > 20]
+            sentences = [s for s in raw_sentences if s and s[-1] not in ',;:']
             key_concepts = extract_key_concepts(text)
+            
+            exercises = []
             
             # Exercise Type 1: Fill in the blanks
             exercises.extend(self._generate_fill_blank_exercises(sentences, language, difficulty))
@@ -51,11 +54,16 @@ class ExerciseGenerator:
                     if important_words:
                         word_to_blank = random.choice(important_words)
                         exercise_text = sentence.replace(word_to_blank, "______")
-                        
+                        # Ensure the blank is not at the very start or end
+                        if exercise_text.startswith('______') or exercise_text.endswith('______'):
+                            continue
+                        # Ensure the answer is not truncated
+                        if len(word_to_blank) < 2 or word_to_blank[-1] in ',;:':
+                            continue
                         if language == "si":
                             instruction = "පහත වාක්‍යයේ හිස් තැන පුරවන්න:"
                         elif language == "ta":
-                            instruction = "பின்வரும் வாக்்யத்தில் கா்லி இடத்தை நிரப்பவும்:"
+                            instruction = "பின்வரும் வாக்கியத்தில் காலி இடத்தை நிரப்பவும்:"
                         else:
                             instruction = "Fill in the blank in the following sentence:"
                         
@@ -77,6 +85,9 @@ class ExerciseGenerator:
         
         for i, sentence in enumerate(sentences[3:6]):
             try:
+                # Only use sentences that are likely to be factual and complete
+                if len(sentence) < 20 or sentence[-1] in ',;:':
+                    continue
                 if language == "si":
                     instruction = "පහත ප්‍රකාශනය සත්‍ය ද අසත්‍ය ද?"
                 elif language == "ta":
@@ -109,9 +120,10 @@ class ExerciseGenerator:
                 else:
                     question = f"Briefly explain '{concept}'."
                 
-                # Find relevant sentence containing the concept
-                relevant_sentence = next((s for s in sentences if concept.lower() in s.lower()), sentences[0])
-                
+                # Find relevant sentence containing the concept, ensure it's not truncated
+                relevant_sentence = next((s for s in sentences if concept.lower() in s.lower() and len(s) > 20 and s[-1] not in ',;:'), None)
+                if not relevant_sentence:
+                    continue
                 exercises.append({
                     "type": "short_answer",
                     "instruction": "Answer the following question:",
@@ -135,8 +147,8 @@ class ExerciseGenerator:
             definitions = []
             
             for concept in concepts_subset:
-                # Find sentence containing the concept
-                definition = next((s for s in sentences if concept.lower() in s.lower()), f"Related to {concept}")
+                # Find sentence containing the concept, ensure it's not truncated
+                definition = next((s for s in sentences if concept.lower() in s.lower() and len(s) > 20 and s[-1] not in ',;:'), f"Related to {concept}")
                 definitions.append(definition[:100] + "..." if len(definition) > 100 else definition)
             
             if language == "si":

@@ -179,11 +179,18 @@ Continue with Q3, Q4, Q5..."""
                         option_d.strip()
                     ]
                     correct_answer = correct_answer.strip()
+
+                    # Remove option letters (e.g., 'A)', 'B)', etc.) at the start
+                    correct_answer = re.sub(r'^[A-D]\)\s*', '', correct_answer)
+                    # Remove Markdown bold/italics and extra asterisks
+                    correct_answer = re.sub(r'\*\*|\*', '', correct_answer).strip()
+                    # Remove any trailing commentary after '---' or similar
+                    correct_answer = re.split(r'---|These questions|Let me know', correct_answer)[0].strip()
                     
                     # Validate that we have meaningful content
                     if (len(question) > 10 and 
                         all(len(opt) > 5 for opt in options) and 
-                        len(correct_answer) > 5):
+                        len(correct_answer) > 1):
                         
                         quizzes.append({
                             "question": question,
@@ -225,10 +232,15 @@ Continue with Q3, Q4, Q5..."""
                 if line.startswith('Q') and ':' in line:
                     # Save previous question if exists
                     if current_question and current_options and current_answer:
+                        # Clean answer
+                        ca = current_answer.strip()
+                        ca = re.sub(r'^[A-D]\)\s*', '', ca)
+                        ca = re.sub(r'\*\*|\*', '', ca).strip()
+                        ca = re.split(r'---|These questions|Let me know', ca)[0].strip()
                         quizzes.append({
                             "question": current_question,
                             "options": current_options,
-                            "correct_answer": current_answer
+                            "correct_answer": ca
                         })
                     
                     # Start new question
@@ -247,14 +259,18 @@ Continue with Q3, Q4, Q5..."""
             
             # Add the last question
             if current_question and current_options and current_answer:
+                ca = current_answer.strip()
+                ca = re.sub(r'^[A-D]\)\s*', '', ca)
+                ca = re.sub(r'\*\*|\*', '', ca).strip()
+                ca = re.split(r'---|These questions|Let me know', ca)[0].strip()
                 quizzes.append({
                     "question": current_question,
                     "options": current_options,
-                    "correct_answer": current_answer
+                    "correct_answer": ca
                 })
             
             return quizzes
-            
+        
         except Exception as e:
             logger.error(f"Error in fallback parsing: {str(e)}")
             return [] 

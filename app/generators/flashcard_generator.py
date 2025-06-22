@@ -74,14 +74,24 @@ class FlashcardGenerator:
         
         for line in lines:
             line = line.strip()
-            if line.startswith(('Question:', 'ප්‍රශ්නය:', 'கேள்வி:')):
-                question = line.split(':', 1)[1].strip()
-            elif line.startswith(('Answer:', 'පිළිතුර:', 'பதில்:')):
-                answer = line.split(':', 1)[1].strip()
+            # Remove any leading prefix for question
+            if line.lower().startswith(('question:', 'ප්‍රශ්නය:', 'கேள்வி:')):
+                q = line.split(':', 1)[1].strip()
+                # Remove again in case model output is '**Question:** ...'
+                q = re.sub(r'^(\*\*Question:?\*\*|Question:)', '', q, flags=re.IGNORECASE).strip()
+                question = q
+            # Remove any leading prefix for answer
+            elif line.lower().startswith(('answer:', 'පිළිතුර:', 'பதில்:')):
+                a = line.split(':', 1)[1].strip()
+                a = re.sub(r'^(\*\*Answer:?\*\*|Answer:)', '', a, flags=re.IGNORECASE).strip()
+                answer = a
             elif not question and len(line) > 10 and line.endswith('?'):
-                question = line
+                # Remove any prefix if present
+                q = re.sub(r'^(\*\*Question:?\*\*|Question:)', '', line, flags=re.IGNORECASE).strip()
+                question = q
             elif question and not answer and len(line) > 10:
-                answer = line
+                a = re.sub(r'^(\*\*Answer:?\*\*|Answer:)', '', line, flags=re.IGNORECASE).strip()
+                answer = a
         
         # If parsing failed, create from the chunk
         if not question:
@@ -99,7 +109,22 @@ class FlashcardGenerator:
         question = re.sub(r'\s+', ' ', question).strip()
         answer = re.sub(r'\s+', ' ', answer).strip()
         
-        if len(question) > 10 and len(answer) > 10:
+        # Final strip of any remaining prefix
+        question = re.sub(r'^(\*\*Question:?\*\*|Question:)', '', question, flags=re.IGNORECASE).strip()
+        answer = re.sub(r'^(\*\*Answer:?\*\*|Answer:)', '', answer, flags=re.IGNORECASE).strip()
+
+        # Remove option letters (e.g., 'A)', 'B)', etc.) at the start
+        question = re.sub(r'^[A-D]\)\s*', '', question)
+        answer = re.sub(r'^[A-D]\)\s*', '', answer)
+
+        # Remove Markdown bold/italics and extra asterisks
+        question = re.sub(r'\*\*|\*', '', question).strip()
+        answer = re.sub(r'\*\*|\*', '', answer).strip()
+
+        # Remove any trailing commentary after '---' or similar
+        answer = re.split(r'---|These questions|Let me know', answer)[0].strip()
+
+        if len(question) > 10 and len(answer) > 1:
             return question, answer
         
         return "", ""
