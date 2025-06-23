@@ -2,7 +2,12 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, Form, Depends
 from typing import List, Optional
 from ..text_extractor import extract_text_from_file
 from ..generators import FlashcardGenerator, QuizGenerator, ExerciseGenerator
-from ..utils import validate_language, validate_difficulty, validate_file_type
+from ..utils import (
+    validate_language,
+    validate_difficulty,
+    validate_file_type,
+    translate_text,
+)
 from ..logger import logger
 
 router = APIRouter()
@@ -57,6 +62,11 @@ async def process_file(
         # Read and process file
         content = await file.read()
         text = extract_text_from_file(content, file_extension)
+        
+        # Translate text if needed
+        lang_map = {"en": "en", "si": "si", "ta": "ta"}
+        if language in lang_map and language != "en":
+            text = translate_text(text, lang_map[language])
         
         if not text.strip():
             raise HTTPException(status_code=400, detail="No text content found in the document")

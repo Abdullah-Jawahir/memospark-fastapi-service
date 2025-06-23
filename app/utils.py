@@ -62,4 +62,18 @@ def validate_difficulty(difficulty: str) -> str:
 def validate_file_type(file_extension: str) -> bool:
     """Validate if the file type is supported."""
     from .config import SUPPORTED_FILE_TYPES
-    return file_extension.lower() in SUPPORTED_FILE_TYPES 
+    return file_extension.lower() in SUPPORTED_FILE_TYPES
+
+def translate_text(text: str, target_language: str) -> str:
+    """Translate text to the target language using googletrans."""
+    if target_language == "en":
+        return text
+    try:
+        from googletrans import Translator
+        translator = Translator()
+        result = translator.translate(text, dest=target_language)
+        return result.text
+    except Exception as e:
+        # If translation fails, return original text
+        print(f"Translation error: {e}")
+        return text 
