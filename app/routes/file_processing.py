@@ -9,6 +9,7 @@ from ..utils import (
     translate_text,
 )
 from ..logger import logger
+from ..generators.all_content_generator import generate_all_content
 
 router = APIRouter()
 
@@ -71,24 +72,15 @@ async def process_file(
         if not text.strip():
             raise HTTPException(status_code=400, detail="No text content found in the document")
         
-        # Generate requested content types
+        # Generate all content in a single OpenRouter request
+        all_content = generate_all_content(text, language, difficulty)
         generated_content = {}
-        
         if "flashcard" in card_types:
-            logger.info("Generating flashcards...")
-            flashcards = flashcard_generator.generate_flashcards(text, language, difficulty)
-            generated_content["flashcards"] = flashcards
-        
+            generated_content["flashcards"] = all_content.get("flashcards", [])
         if "quiz" in card_types:
-            logger.info("Generating quizzes...")
-            quizzes = quiz_generator.generate_quizzes(text, language, difficulty)
-            generated_content["quizzes"] = quizzes
-        
+            generated_content["quizzes"] = all_content.get("quizzes", [])
         if "exercise" in card_types:
-            logger.info("Generating exercises...")
-            exercises = exercise_generator.generate_exercises(text, language, difficulty)
-            generated_content["exercises"] = exercises
-        
+            generated_content["exercises"] = all_content.get("exercises", [])
         logger.info(f"Successfully processed {file.filename}. Generated: {list(generated_content.keys())}")
         return {"generated_content": generated_content}
         
