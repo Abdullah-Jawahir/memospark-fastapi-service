@@ -21,11 +21,15 @@ Text:
 {text[:2000]}
 
 Format your response as JSON with keys: flashcards, quizzes, exercises. Each should be a list of objects. Example:
-{
-  "flashcards": [ {"question": "...", "answer": "..."}, ... ],
-  "quizzes": [ {"question": "...", "options": ["...", "...", "...", "..."], "answer": "..."}, ... ],
-  "exercises": [ {"type": "fill_blank", "instruction": "...", ...}, ... ]
-}
+{{
+  "flashcards": [ {{"question": "...", "answer": "..."}}, ... ],
+  "quizzes": [ {{"question": "...", "options": ["...", "...", "...", "..."], "answer": "..."}}, ... ],
+  "exercises": [
+    {{"type": "fill_blank", "instruction": "...", ...}},
+    {{"type": "matching", "instruction": "...", "concepts": ["Hinge joint", "Ball-and-socket joint"], "definitions": ["Elbow", "Hip"]}},
+    ...
+  ]
+}}
 """
     try:
         response = model_manager.generate_text(prompt, max_length=2000)

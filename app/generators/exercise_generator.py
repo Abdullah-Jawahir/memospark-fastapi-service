@@ -1,5 +1,5 @@
 import random
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from ..utils import extract_key_concepts
 from ..logger import logger
 from ..models import model_manager
@@ -69,8 +69,7 @@ class ExerciseGenerator:
                 if '______' in sent and len(ans) > 1:
                     exercises.append({
                         'type': 'fill_blank',
-                        'instruction': self._get_instruction('fill_blank', language),
-                        'exercise_text': sent,
+                        'instruction': sent,
                         'answer': ans,
                         'difficulty': difficulty
                     })
@@ -87,8 +86,7 @@ class ExerciseGenerator:
                 if ans.lower() in ['true', 'false']:
                     exercises.append({
                         'type': 'true_false',
-                        'instruction': self._get_instruction('true_false', language),
-                        'exercise_text': sent,
+                        'instruction': sent,
                         'answer': ans.capitalize(),
                         'difficulty': difficulty
                     })
@@ -105,8 +103,7 @@ class ExerciseGenerator:
                 if len(q) > 10 and len(ans) > 1:
                     exercises.append({
                         'type': 'short_answer',
-                        'instruction': self._get_instruction('short_answer', language),
-                        'exercise_text': q,
+                        'instruction': q,
                         'answer': ans,
                         'difficulty': difficulty
                     })
@@ -279,7 +276,7 @@ class ExerciseGenerator:
         
         return exercises
     
-    def _generate_matching_exercise(self, key_concepts: List[str], sentences: List[str], language: str, difficulty: str) -> Dict[str, Any]:
+    def _generate_matching_exercise(self, key_concepts: List[str], sentences: List[str], language: str, difficulty: str) -> Optional[Dict[str, Any]]:
         """Generate matching exercise."""
         try:
             if len(key_concepts) < 4:
