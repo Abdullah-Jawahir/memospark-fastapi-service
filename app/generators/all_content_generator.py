@@ -40,10 +40,18 @@ Format your response as JSON with keys: flashcards, quizzes, exercises. Each sho
         if start != -1 and end != -1:
             json_str = response[start:end]
             data = json.loads(json_str)
+            quizzes = data.get("quizzes", [])
+            for quiz in quizzes:
+                if "difficulty" not in quiz:
+                    quiz["difficulty"] = difficulty
+            exercises = data.get("exercises", [])
+            for exercise in exercises:
+                if "difficulty" not in exercise:
+                    exercise["difficulty"] = difficulty
             return {
                 "flashcards": data.get("flashcards", []),
-                "quizzes": data.get("quizzes", []),
-                "exercises": data.get("exercises", []),
+                "quizzes": quizzes,
+                "exercises": exercises,
             }
         else:
             logger.error("Could not find JSON in OpenRouter response")
