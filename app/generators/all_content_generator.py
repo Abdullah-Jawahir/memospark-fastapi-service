@@ -48,8 +48,12 @@ Format your response as JSON with keys: flashcards, quizzes, exercises. Each sho
             for exercise in exercises:
                 if "difficulty" not in exercise:
                     exercise["difficulty"] = difficulty
+            flashcards = data.get("flashcards", [])
+            for flashcard in flashcards:
+                if "difficulty" not in flashcard:
+                    flashcard["difficulty"] = difficulty
             return {
-                "flashcards": data.get("flashcards", []),
+                "flashcards": flashcards,
                 "quizzes": quizzes,
                 "exercises": exercises,
             }
