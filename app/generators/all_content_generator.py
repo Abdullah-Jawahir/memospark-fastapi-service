@@ -52,6 +52,8 @@ Format your response as JSON with keys: flashcards, quizzes, exercises. Each sho
             for flashcard in flashcards:
                 if "difficulty" not in flashcard:
                     flashcard["difficulty"] = difficulty
+                if "type" not in flashcard:
+                    flashcard["type"] = "Flashcard"
             return {
                 "flashcards": flashcards,
                 "quizzes": quizzes,
