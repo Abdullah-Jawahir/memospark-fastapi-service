@@ -74,14 +74,38 @@ async def process_file(
         
         # Generate all content in a single OpenRouter request
         all_content = generate_all_content(text, language, difficulty)
+        
+        # Validate that we actually got content
         generated_content = {}
+        total_items = 0
+        
         if "flashcard" in card_types:
-            generated_content["flashcards"] = all_content.get("flashcards", [])
+            flashcards = all_content.get("flashcards", [])
+            if isinstance(flashcards, list) and len(flashcards) > 0:
+                generated_content["flashcards"] = flashcards
+                total_items += len(flashcards)
+        
         if "quiz" in card_types:
-            generated_content["quizzes"] = all_content.get("quizzes", [])
+            quizzes = all_content.get("quizzes", [])
+            if isinstance(quizzes, list) and len(quizzes) > 0:
+                generated_content["quizzes"] = quizzes
+                total_items += len(quizzes)
+        
         if "exercise" in card_types:
-            generated_content["exercises"] = all_content.get("exercises", [])
-        logger.info(f"Successfully processed {file.filename}. Generated: {list(generated_content.keys())}")
+            exercises = all_content.get("exercises", [])
+            if isinstance(exercises, list) and len(exercises) > 0:
+                generated_content["exercises"] = exercises
+                total_items += len(exercises)
+        
+        # Check if we actually generated any content
+        if total_items == 0:
+            logger.warning(f"No content generated for {file.filename}. Requested types: {card_types}")
+            raise HTTPException(
+                status_code=422, 
+                detail=f"Failed to generate content. Please try again or check if the document contains sufficient text."
+            )
+        
+        logger.info(f"Successfully processed {file.filename}. Generated {total_items} items: {list(generated_content.keys())}")
         return {"generated_content": generated_content}
         
     except HTTPException:
