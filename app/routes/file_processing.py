@@ -7,6 +7,7 @@ from ..utils import (
     validate_difficulty,
     validate_file_type,
     translate_text,
+    translate_generated_content,
 )
 from ..logger import logger
 from ..generators.all_content_generator import generate_all_content
@@ -64,16 +65,19 @@ async def process_file(
         content = await file.read()
         text = extract_text_from_file(content, file_extension)
         
-        # Translate text if needed
-        lang_map = {"en": "en", "si": "si", "ta": "ta"}
-        if language in lang_map and language != "en":
-            text = translate_text(text, lang_map[language])
+        # Note: We no longer translate the input text here
+        # The AI will generate content in English first, then we'll translate the output
         
         if not text.strip():
             raise HTTPException(status_code=400, detail="No text content found in the document")
         
-        # Generate all content in a single OpenRouter request
-        all_content = generate_all_content(text, language, difficulty)
+        # Generate all content in English first (regardless of requested language)
+        all_content = generate_all_content(text, "en", difficulty)
+        
+        # Now translate the generated content to the requested language if needed
+        if language != "en":
+            logger.info(f"Translating generated content to {language}")
+            all_content = translate_generated_content(all_content, language)
         
         # Validate that we actually got content
         generated_content = {}
