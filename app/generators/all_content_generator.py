@@ -7,6 +7,7 @@ import re
 def generate_all_content(text: str, language: str = "en", difficulty: str = "beginner") -> dict:
     """
     Generate flashcards, quizzes, and exercises in a single OpenRouter request.
+    Always generates content in English first, then content will be translated if needed.
     Returns a dict with keys: flashcards, quizzes, exercises.
     """
     max_retries = 3
@@ -20,7 +21,9 @@ You are an educational content generator. Given the following text, generate:
 2. {GENERATION_LIMITS['quizzes']} multiple choice quiz questions (each with 4 options and the correct answer)
 3. {GENERATION_LIMITS['exercises']} exercises (mix of fill-in-the-blank, true/false, short answer, and matching)
 
-All content must be in the language: {language}.
+IMPORTANT: Generate ALL content in ENGLISH only, regardless of the source language.
+The content will be translated to the target language later by the system.
+
 Difficulty: {difficulty}.
 
 Text:
