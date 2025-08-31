@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from .routes import file_processing_router, health_router
+from .routes import file_processing_router, health_router, search_flashcards_router
 from .middleware import setup_cors, log_requests_middleware
 from .logger import logger
 
@@ -18,6 +18,7 @@ def create_app() -> FastAPI:
     # Include routers
     app.include_router(file_processing_router, prefix="/api/v1", tags=["file-processing"])
     app.include_router(health_router, tags=["health"])
+    app.include_router(search_flashcards_router, prefix="/api/v1", tags=["search-flashcards"])
     
     logger.info("FastAPI application created successfully")
     return app
