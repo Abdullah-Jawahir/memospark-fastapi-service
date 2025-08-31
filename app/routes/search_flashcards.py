@@ -7,110 +7,12 @@ from ..models import model_manager
 from ..logger import logger
 import time
 import asyncio
-import re
 
 router = APIRouter()
 
 # Initialize generators
 flashcard_generator = FlashcardGenerator()
 topic_content_generator = TopicContentGenerator()
-
-def clean_flashcard_text(text: str) -> str:
-    """
-    Clean and format flashcard text to remove markdown and formatting artifacts.
-    
-    Args:
-        text: Raw text from AI model
-        
-    Returns:
-        Clean, formatted text suitable for flashcards
-    """
-    if not text:
-        return ""
-    
-    # Remove markdown formatting
-    text = re.sub(r'#{1,6}\s*', '', text)  # Remove headers
-    text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)  # Remove bold
-    text = re.sub(r'\*(.*?)\*', r'\1', text)  # Remove italic
-    text = re.sub(r'`(.*?)`', r'\1', text)  # Remove code blocks
-    text = re.sub(r'\[(.*?)\]\(.*?\)', r'\1', text)  # Remove links
-    
-    # Remove incomplete sentences and fragments
-    text = re.sub(r'\.{3,}', '.', text)  # Replace multiple dots with single dot
-    text = re.sub(r'\.{2,}$', '.', text)  # Remove trailing dots
-    
-    # Clean up whitespace
-    text = re.sub(r'\s+', ' ', text)  # Replace multiple spaces with single space
-    text = text.strip()
-    
-    # Remove common AI artifacts
-    text = re.sub(r'Flashcard:\s*', '', text)
-    text = re.sub(r'Q:\s*', '', text)
-    text = re.sub(r'A:\s*', '', text)
-    text = re.sub(r'Question:\s*', '', text)
-    text = re.sub(r'Answer:\s*', '', text)
-    
-    # Remove specific artifacts from your example
-    text = re.sub(r'### \*\*.*?\*\*.*?\n#### \*\*.*?\*\*.*?\n', '', text)
-    text = re.sub(r'Core Definition\*\*\s*\n\*\*Flashcard:\s*\n\*\*Q:\s*', '', text)
-    text = re.sub(r'Key Concepts\*\*\s*\n\*\*Flashcard:\s*\n\*\*Q:\s*', '', text)
-    text = re.sub(r'What does \'.*?\' refer to\?', '', text)
-    
-    # Remove incomplete text fragments
-    text = re.sub(r'\.{2,}$', '.', text)  # Remove trailing dots
-    text = re.sub(r'\(e\.g\.,?.*?\)', '', text)  # Remove incomplete examples
-    text = re.sub(r',.*?\.{2,}', '.', text)  # Remove trailing incomplete phrases
-    
-    # Ensure proper sentence endings
-    if text and not text.endswith(('.', '!', '?')):
-        text += '.'
-    
-    # Final cleanup - remove any remaining artifacts
-    text = re.sub(r'\s+', ' ', text)  # Clean up any remaining multiple spaces
-    text = text.strip()
-    
-    return text
-
-def format_flashcard_pair(question: str, answer: str) -> tuple[str, str]:
-    """
-    Format a question-answer pair to ensure they're clean and meaningful.
-    
-    Args:
-        question: Raw question text
-        answer: Raw answer text
-        
-    Returns:
-        Tuple of (clean_question, clean_answer)
-    """
-    # Clean the texts
-    clean_q = clean_flashcard_text(question)
-    clean_a = clean_flashcard_text(answer)
-    
-    # Skip if either text is too short or meaningless
-    if len(clean_q) < 10 or len(clean_a) < 10:
-        return "", ""
-    
-    # Skip if question contains common artifacts
-    if any(artifact in clean_q.lower() for artifact in ['what does', 'refer to', '###', '**']):
-        return "", ""
-    
-    # Skip if answer contains common artifacts
-    if any(artifact in clean_a.lower() for artifact in ['###', '**', 'flashcard:', 'q:', 'a:']):
-        return "", ""
-    
-    # Ensure question ends with question mark
-    if clean_q and not clean_q.endswith('?'):
-        clean_q += '?'
-    
-    # Ensure answer doesn't end with question mark
-    if clean_a and clean_a.endswith('?'):
-        clean_a = clean_a[:-1] + '.'
-    
-    # Ensure answer is a complete sentence
-    if clean_a and not clean_a.endswith(('.', '!', '?')):
-        clean_a += '.'
-    
-    return clean_q, clean_a
 
 class SearchFlashcardRequest(BaseModel):
     """Request model for search-based flashcard generation."""
@@ -165,8 +67,6 @@ async def search_and_generate_flashcards(request: SearchFlashcardRequest):
             request.difficulty = "beginner"
         
         # Add minimum processing time to ensure proper queue behavior
-        # This prevents the job from completing too quickly and ensures
-        # the frontend can properly track progress
         start_time = time.time()
         
         # Generate educational content about the topic using the topic content generator
@@ -182,58 +82,15 @@ async def search_and_generate_flashcards(request: SearchFlashcardRequest):
                 detail="Failed to generate content for the topic"
             )
         
-        # Generate flashcards from the topic content
-        raw_flashcards = flashcard_generator.generate_flashcards(
+        # Generate flashcards from the topic content in a single call
+        flashcards = flashcard_generator.generate_flashcards(
             text=topic_content,
             language="en",  # Always generate in English as per requirements
-            difficulty=request.difficulty
+            difficulty=request.difficulty,
+            count=request.count
         )
         
-        # Clean and format flashcards
-        cleaned_flashcards = []
-        for flashcard in raw_flashcards[:request.count * 2]:  # Process more to account for filtering
-            # Clean the question and answer
-            clean_question, clean_answer = format_flashcard_pair(
-                flashcard.get('question', ''),
-                flashcard.get('answer', '')
-            )
-            
-            # Only include flashcards with meaningful content
-            if clean_question and clean_answer and len(clean_question) > 10 and len(clean_answer) > 10:
-                cleaned_flashcards.append({
-                    'question': clean_question,
-                    'answer': clean_answer,
-                    'type': flashcard.get('type', 'Q&A'),
-                    'difficulty': flashcard.get('difficulty', request.difficulty)
-                })
-                
-                # Stop if we have enough flashcards
-                if len(cleaned_flashcards) >= request.count:
-                    break
-        
-        # If we don't have enough cleaned flashcards, try to generate more
-        if len(cleaned_flashcards) < request.count:
-            logger.warning(f"Only got {len(cleaned_flashcards)} clean flashcards, attempting to generate more")
-            
-            # Try to process more raw flashcards
-            for flashcard in raw_flashcards[request.count * 2:]:
-                if len(cleaned_flashcards) >= request.count:
-                    break
-                    
-                clean_question, clean_answer = format_flashcard_pair(
-                    flashcard.get('question', ''),
-                    flashcard.get('answer', '')
-                )
-                
-                if clean_question and clean_answer:
-                    cleaned_flashcards.append({
-                        'question': clean_question,
-                        'answer': clean_answer,
-                        'type': flashcard.get('type', 'Q&A'),
-                        'difficulty': flashcard.get('difficulty', request.difficulty)
-                    })
-        
-        if not cleaned_flashcards:
+        if not flashcards:
             raise HTTPException(
                 status_code=500,
                 detail="Failed to generate valid flashcards for the topic"
@@ -247,15 +104,15 @@ async def search_and_generate_flashcards(request: SearchFlashcardRequest):
             remaining_time = min_processing_time - elapsed_time
             await asyncio.sleep(remaining_time)
         
-        logger.info(f"Successfully generated {len(cleaned_flashcards)} cleaned flashcards for topic: {request.topic}")
+        logger.info(f"Successfully generated {len(flashcards)} flashcards for topic: {request.topic}")
         
         return SearchFlashcardResponse(
             topic=request.topic,
             description=request.description,
-            flashcards=cleaned_flashcards,
-            total_count=len(cleaned_flashcards),
+            flashcards=flashcards,
+            total_count=len(flashcards),
             difficulty=request.difficulty,
-            message=f"Successfully generated {len(cleaned_flashcards)} flashcards for '{request.topic}'"
+            message=f"Successfully generated {len(flashcards)} flashcards for '{request.topic}'"
         )
         
     except HTTPException:
@@ -311,7 +168,7 @@ async def search_flashcards_health():
     try:
         # Test if the flashcard generator is working
         test_text = "This is a test text for health check."
-        test_flashcards = flashcard_generator.generate_flashcards(test_text, "en", "beginner")
+        test_flashcards = flashcard_generator.generate_flashcards(test_text, "en", "beginner", 2)
         
         return {
             "status": "healthy",

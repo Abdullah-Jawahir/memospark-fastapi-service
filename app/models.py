@@ -97,8 +97,8 @@ class ModelManager:
     
     def _generate_text_openrouter(self, prompt: str, max_length: int) -> str:
         """Generate text using OpenRouter API with multi-model fallback."""
-        max_retries_per_model = 2
-        retry_delay = 1  # seconds
+        max_retries_per_model = 1  # Reduced from 2 to minimize rate limiting
+        retry_delay = 2  # Increased delay to be more respectful of rate limits
         
         # Try each OpenRouter model in order
         for model_index, model_name in enumerate(OPENROUTER_MODELS_TO_TRY):
@@ -113,7 +113,7 @@ class ModelManager:
                     data = {
                         "model": model_name,
                         "messages": [
-                            {"role": "system", "content": "You are a helpful assistant for educational quiz generation."},
+                            {"role": "system", "content": "You are a helpful assistant for educational content generation."},
                             {"role": "user", "content": prompt}
                         ],
                         "max_tokens": max_length,
@@ -124,15 +124,8 @@ class ModelManager:
                     response = requests.post(OPENROUTER_API_URL, headers=headers, data=json.dumps(data), timeout=60)
                     
                     if response.status_code == 429:  # Rate limited
-                        if attempt < max_retries_per_model - 1:
-                            wait_time = retry_delay * (2 ** attempt)
-                            logger.warning(f"Rate limited on {model_name} (attempt {attempt + 1}/{max_retries_per_model}). Waiting {wait_time}s...")
-                            import time
-                            time.sleep(wait_time)
-                            continue
-                        else:
-                            logger.warning(f"Rate limited on {model_name}. Trying next model...")
-                            break  # Try next model
+                        logger.warning(f"Rate limited on {model_name}. Trying next model...")
+                        break  # Move to next model immediately instead of retrying
                     
                     try:
                         response.raise_for_status()

@@ -49,38 +49,44 @@ class TopicContentGenerator:
         
         complexity = complexity_guide.get(difficulty, complexity_guide["beginner"])
         
-        base_prompt = f"""Generate comprehensive educational content about the topic: {topic}
+        base_prompt = f"""You are an expert educator. Create comprehensive, structured educational content about: {topic}
 
 Difficulty Level: {difficulty.title()}
 Focus on: {complexity}
 
-Please provide detailed, accurate, and educational information that covers:
+Create content that covers these key areas:
 
-1. **Core Definition**: Clear explanation of what {topic} is
-2. **Key Concepts**: Main ideas and principles related to {topic}
-3. **Important Facts**: Essential information and details
-4. **Examples**: Concrete examples and real-world applications
-5. **Related Concepts**: Connections to other topics and fields
-6. **Practical Applications**: How this knowledge is used in practice
-7. **Common Misconceptions**: What people often get wrong about {topic}
-8. **Historical Context**: When and how this topic developed (if applicable)
+1. **Core Definition**: What is {topic}? Provide a clear, concise explanation.
+2. **Key Concepts**: List and explain the main ideas, principles, and components.
+3. **Important Facts**: Include essential information, statistics, and details that learners should know.
+4. **Examples**: Provide concrete, real-world examples and applications.
+5. **Related Concepts**: Explain how this topic connects to other fields and subjects.
+6. **Practical Applications**: Describe how this knowledge is used in practice.
+7. **Common Misconceptions**: Address what people often misunderstand about {topic}.
+8. **Historical Context**: When and how did this topic develop? (if applicable)
 
 """
         
         if description:
             base_prompt += f"Additional Context: {description}\n\n"
         
-        base_prompt += f"""Format the response as clear, structured educational content that can be used to create flashcards.
-Make sure the content is suitable for {difficulty} level learners and covers the topic thoroughly.
-Use clear language and provide specific examples where possible."""
-        
+        base_prompt += f"""Requirements:
+- Write in clear, educational language suitable for {difficulty} level learners
+- Use specific examples and concrete details
+- Structure the content logically with clear sections
+- Make the content engaging and easy to understand
+- Ensure all information is accurate and educational
+- Write content that can be easily converted into flashcards
+
+Format the response as clear, structured educational content. Each section should contain specific, testable information."""
+
         return base_prompt
     
     def _generate_content(self, prompt: str) -> str:
         """Generate content using the AI model."""
         try:
-            # Generate content with appropriate length
-            content = self.model_manager.generate_text(prompt, max_length=1000)
+            # Generate content with appropriate length for comprehensive coverage
+            content = self.model_manager.generate_text(prompt, max_length=800)
             return content
             
         except Exception as e:
@@ -107,7 +113,7 @@ Keep it clear and structured."""
             if description:
                 fallback_prompt += f"\n\nAdditional context: {description}"
             
-            content = self.model_manager.generate_text(fallback_prompt, max_length=600)
+            content = self.model_manager.generate_text(fallback_prompt, max_length=500)
             return content
             
         except Exception as e:
