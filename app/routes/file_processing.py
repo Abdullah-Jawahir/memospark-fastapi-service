@@ -10,11 +10,11 @@ from ..utils import (
     translate_generated_content,
 )
 from ..logger import logger
-from ..generators.all_content_generator import generate_all_content
+from ..generators.document_all_content_generator import generate_document_content
 
 router = APIRouter()
 
-# Initialize generators
+# Initialize generators (kept for backward compatibility, but not used in main flow)
 flashcard_generator = FlashcardGenerator()
 quiz_generator = QuizGenerator()
 exercise_generator = ExerciseGenerator()
@@ -72,7 +72,7 @@ async def process_file(
             raise HTTPException(status_code=400, detail="No text content found in the document")
         
         # Generate all content in English first (regardless of requested language)
-        all_content = generate_all_content(text, "en", difficulty)
+        all_content = generate_document_content(text, "en", difficulty)
         
         # Now translate the generated content to the requested language if needed
         if language != "en":
