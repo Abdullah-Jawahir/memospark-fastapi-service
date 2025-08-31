@@ -1,39 +1,45 @@
 # Rate Limiting Solutions
 
 ## Problem
+
 You're getting `429 Too Many Requests` errors from OpenRouter's free tier models, and the frontend shows 0 card results even when the backend returns 200.
 
 ## Solutions
 
 ### 1. **Multi-Model Fallback Strategy (Current Implementation)**
+
 The system now automatically tries multiple free OpenRouter models in sequence:
 
 1. **Primary**: `deepseek/deepseek-chat-v3-0324:free`
 2. **Fallback 1**: `google/gemma-2-9b-it:free` (confirmed working)
-3. **Fallback 2**: `microsoft/phi-3.5-mini-4k-instruct:free`
+3. **Fallback 2**: `microsoft/phi-3.5-mini-4k-instruct`
 4. **Fallback 3**: `mistralai/mistral-7b-instruct:free`
-5. **Fallback 4**: `nousresearch/nous-hermes-2-mixtral-8x7b-dpo:free`
-6. **Fallback 5**: `meta-llama/llama-3.1-8b-instruct:free` (if available)
+5. **Fallback 4**: `nousresearch/nous-hermes-2-mixtral-8x7b-dpo`
+6. **Fallback 5**: `meta-llama/llama-3.1-8b-instruct` (if available)
 7. **Final Fallback**: Local models (if enabled)
 
 **Benefits:**
+
 - Multiple free model options
 - Automatic retry with exponential backoff
 - Graceful degradation
 - No single point of failure
 
 ### 2. **Content Generation Fixes**
+
 - **JSON Parsing**: Fixed trailing comma issues that caused parsing errors
 - **Retry Logic**: Added 3 attempts for content generation
 - **Validation**: Only return 200 when actual content is generated
 - **Error Handling**: Better logging and error messages
 
 ### 3. **Response Validation**
+
 - **No Empty Responses**: Frontend will never receive 200 with 0 cards
 - **Proper Status Codes**: 422 for content generation failures, 200 only for success
 - **Content Validation**: Ensures generated content meets quality standards
 
 ### 4. **Force Local Models Only**
+
 Set these environment variables to bypass OpenRouter completely:
 
 ```bash
@@ -45,16 +51,19 @@ OPENROUTER_API_KEY=
 ```
 
 **Benefits:**
+
 - No rate limiting
 - Works offline
 - No API costs
 
 **Drawbacks:**
+
 - Slower generation
 - Lower quality results
 - Requires more local resources
 
 ### 5. **Add Your Own API Key**
+
 Get a paid API key from OpenRouter for higher rate limits:
 
 1. Go to [OpenRouter Settings](https://openrouter.ai/settings/integrations)
@@ -113,6 +122,7 @@ uvicorn app.main:app --reload --port 8001
 ```
 
 ## Current Status
+
 ✅ **Fixed**: Import error resolved  
 ✅ **Fixed**: Multi-model OpenRouter fallback implemented  
 ✅ **Fixed**: Smart retry logic with exponential backoff  
