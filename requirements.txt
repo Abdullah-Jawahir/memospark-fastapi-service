@@ -9,4 +9,4 @@ torch
 numpy<2
 pydantic
 sentence-transformers
-googletrans==4.0.0rc1
+deep-translator

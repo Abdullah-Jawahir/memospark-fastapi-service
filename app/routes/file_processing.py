@@ -7,13 +7,14 @@ from ..utils import (
     validate_difficulty,
     validate_file_type,
     translate_text,
+    translate_generated_content,
 )
 from ..logger import logger
-from ..generators.all_content_generator import generate_all_content
+from ..generators.document_all_content_generator import generate_document_content
 
 router = APIRouter()
 
-# Initialize generators
+# Initialize generators (kept for backward compatibility, but not used in main flow)
 flashcard_generator = FlashcardGenerator()
 quiz_generator = QuizGenerator()
 exercise_generator = ExerciseGenerator()
@@ -64,24 +65,51 @@ async def process_file(
         content = await file.read()
         text = extract_text_from_file(content, file_extension)
         
-        # Translate text if needed
-        lang_map = {"en": "en", "si": "si", "ta": "ta"}
-        if language in lang_map and language != "en":
-            text = translate_text(text, lang_map[language])
+        # Note: We no longer translate the input text here
+        # The AI will generate content in English first, then we'll translate the output
         
         if not text.strip():
             raise HTTPException(status_code=400, detail="No text content found in the document")
         
-        # Generate all content in a single OpenRouter request
-        all_content = generate_all_content(text, language, difficulty)
+        # Generate all content in English first (regardless of requested language)
+        all_content = generate_document_content(text, "en", difficulty)
+        
+        # Now translate the generated content to the requested language if needed
+        if language != "en":
+            logger.info(f"Translating generated content to {language}")
+            all_content = translate_generated_content(all_content, language)
+        
+        # Validate that we actually got content
         generated_content = {}
+        total_items = 0
+        
         if "flashcard" in card_types:
-            generated_content["flashcards"] = all_content.get("flashcards", [])
+            flashcards = all_content.get("flashcards", [])
+            if isinstance(flashcards, list) and len(flashcards) > 0:
+                generated_content["flashcards"] = flashcards
+                total_items += len(flashcards)
+        
         if "quiz" in card_types:
-            generated_content["quizzes"] = all_content.get("quizzes", [])
+            quizzes = all_content.get("quizzes", [])
+            if isinstance(quizzes, list) and len(quizzes) > 0:
+                generated_content["quizzes"] = quizzes
+                total_items += len(quizzes)
+        
         if "exercise" in card_types:
-            generated_content["exercises"] = all_content.get("exercises", [])
-        logger.info(f"Successfully processed {file.filename}. Generated: {list(generated_content.keys())}")
+            exercises = all_content.get("exercises", [])
+            if isinstance(exercises, list) and len(exercises) > 0:
+                generated_content["exercises"] = exercises
+                total_items += len(exercises)
+        
+        # Check if we actually generated any content
+        if total_items == 0:
+            logger.warning(f"No content generated for {file.filename}. Requested types: {card_types}")
+            raise HTTPException(
+                status_code=422, 
+                detail=f"Failed to generate content. Please try again or check if the document contains sufficient text."
+            )
+        
+        logger.info(f"Successfully processed {file.filename}. Generated {total_items} items: {list(generated_content.keys())}")
         return {"generated_content": generated_content}
         
     except HTTPException:

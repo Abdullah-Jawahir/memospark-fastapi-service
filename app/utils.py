@@ -65,15 +65,153 @@ def validate_file_type(file_extension: str) -> bool:
     return file_extension.lower() in SUPPORTED_FILE_TYPES
 
 def translate_text(text: str, target_language: str) -> str:
-    """Translate text to the target language using googletrans."""
+    """Translate text to the target language using deep-translator."""
     if target_language == "en":
         return text
+    
     try:
-        from googletrans import Translator
-        translator = Translator()
-        result = translator.translate(text, dest=target_language)
-        return result.text
+        from deep_translator import GoogleTranslator
+        translator = GoogleTranslator(source='en', target=target_language)
+        return translator.translate(text)
     except Exception as e:
+        logger.error(f"Translation failed: {e}")
         # If translation fails, return original text
-        print(f"Translation error: {e}")
-        return text 
+        return text
+
+def translate_generated_content(content: dict, target_language: str) -> dict:
+    """
+    Translate generated content (flashcards, quizzes, exercises) to the target language.
+    
+    Args:
+        content: Dictionary containing flashcards, quizzes, and exercises
+        target_language: Target language code (en, si, ta)
+    
+    Returns:
+        Translated content dictionary
+    """
+    if target_language == "en":
+        return content
+    
+    try:
+        from deep_translator import GoogleTranslator
+        translator = GoogleTranslator(source='en', target=target_language)
+    except Exception as e:
+        logger.error(f"Translation library not available: {e}")
+        # If translation library is not available, return original content
+        return content
+    
+    translated_content = {}
+    
+    # Translate flashcards
+    if "flashcards" in content and isinstance(content["flashcards"], list):
+        translated_flashcards = []
+        for flashcard in content["flashcards"]:
+            if isinstance(flashcard, dict):
+                translated_flashcard = flashcard.copy()
+                if "question" in flashcard:
+                    try:
+                        translated_flashcard["question"] = translator.translate(flashcard["question"])
+                    except Exception as e:
+                        logger.warning(f"Failed to translate flashcard question: {e}")
+                        translated_flashcard["question"] = flashcard["question"]
+                
+                if "answer" in flashcard:
+                    try:
+                        translated_flashcard["answer"] = translator.translate(flashcard["answer"])
+                    except Exception as e:
+                        logger.warning(f"Failed to translate flashcard answer: {e}")
+                        translated_flashcard["answer"] = flashcard["answer"]
+                
+                translated_flashcards.append(translated_flashcard)
+            else:
+                translated_flashcards.append(flashcard)
+        translated_content["flashcards"] = translated_flashcards
+    
+    # Translate quizzes
+    if "quizzes" in content and isinstance(content["quizzes"], list):
+        translated_quizzes = []
+        for quiz in content["quizzes"]:
+            if isinstance(quiz, dict):
+                translated_quiz = quiz.copy()
+                if "question" in quiz:
+                    try:
+                        translated_quiz["question"] = translator.translate(quiz["question"])
+                    except Exception as e:
+                        logger.warning(f"Failed to translate quiz question: {e}")
+                        translated_quiz["question"] = quiz["question"]
+                
+                if "options" in quiz and isinstance(quiz["options"], list):
+                    translated_options = []
+                    for option in quiz["options"]:
+                        try:
+                            translated_options.append(translator.translate(option))
+                        except Exception as e:
+                            logger.warning(f"Failed to translate quiz option: {e}")
+                            translated_options.append(option)
+                    translated_quiz["options"] = translated_options
+                
+                if "answer" in quiz:
+                    try:
+                        translated_quiz["answer"] = translator.translate(quiz["answer"])
+                    except Exception as e:
+                        logger.warning(f"Failed to translate quiz answer: {e}")
+                        translated_quiz["answer"] = quiz["answer"]
+                
+                translated_quizzes.append(translated_quiz)
+            else:
+                translated_quizzes.append(quiz)
+        translated_content["quizzes"] = translated_quizzes
+    
+    # Translate exercises
+    if "exercises" in content and isinstance(content["exercises"], list):
+        translated_exercises = []
+        for exercise in content["exercises"]:
+            if isinstance(exercise, dict):
+                translated_exercise = exercise.copy()
+                if "instruction" in exercise:
+                    try:
+                        translated_exercise["instruction"] = translator.translate(exercise["instruction"])
+                    except Exception as e:
+                        logger.warning(f"Failed to translate exercise instruction: {e}")
+                        translated_exercise["instruction"] = exercise["instruction"]
+                
+                if "question" in exercise:
+                    try:
+                        translated_exercise["question"] = translator.translate(exercise["question"])
+                    except Exception as e:
+                        logger.warning(f"Failed to translate exercise question: {e}")
+                        translated_exercise["question"] = exercise["question"]
+                
+                if "answer" in exercise:
+                    try:
+                        translated_exercise["answer"] = translator.translate(exercise["answer"])
+                    except Exception as e:
+                        logger.warning(f"Failed to translate exercise answer: {e}")
+                        translated_exercise["answer"] = exercise["answer"]
+                
+                if "concepts" in exercise and isinstance(exercise["concepts"], list):
+                    translated_concepts = []
+                    for concept in exercise["concepts"]:
+                        try:
+                            translated_concepts.append(translator.translate(concept))
+                        except Exception as e:
+                            logger.warning(f"Failed to translate exercise concept: {e}")
+                            translated_concepts.append(concept)
+                    translated_exercise["concepts"] = translated_concepts
+                
+                if "definitions" in exercise and isinstance(exercise["definitions"], list):
+                    translated_definitions = []
+                    for definition in exercise["definitions"]:
+                        try:
+                            translated_definitions.append(translator.translate(definition))
+                        except Exception as e:
+                            logger.warning(f"Failed to translate exercise definition: {e}")
+                            translated_definitions.append(definition)
+                    translated_exercise["definitions"] = translated_definitions
+                
+                translated_exercises.append(translated_exercise)
+            else:
+                translated_exercises.append(exercise)
+        translated_content["exercises"] = translated_exercises
+    
+    return translated_content 

@@ -1,6 +1,6 @@
 import torch
 from transformers import pipeline, AutoTokenizer, AutoModelForSeq2SeqLM, AutoModelForCausalLM
-from .config import MODELS_TO_TRY, CACHE_DIR, GENERATION_PARAMS, OPENROUTER_API_KEY, OPENROUTER_API_URL, OPENROUTER_MODEL
+from .config import MODELS_TO_TRY, CACHE_DIR, GENERATION_PARAMS, OPENROUTER_API_KEY, OPENROUTER_API_URL, OPENROUTER_MODEL, OPENROUTER_MODELS_TO_TRY, ENABLE_OPENROUTER, FALLBACK_TO_LOCAL
 from .logger import logger
 import re
 import requests
@@ -14,7 +14,7 @@ class ModelManager:
         self.model = None
         self.current_model_name = None
         self.question_generator = None
-        self.use_openrouter = bool(OPENROUTER_API_KEY)
+        self.use_openrouter = ENABLE_OPENROUTER
         if not self.use_openrouter:
             self._load_best_model()
             self._setup_pipeline()
@@ -51,49 +51,122 @@ class ModelManager:
             logger.error(f"Failed to load question generation pipeline: {str(e)}")
             self.question_generator = None
     
+    def _ensure_local_model_loaded(self):
+        """Ensure a local model is loaded if needed."""
+        if not self.current_model_name or not self.model or not self.tokenizer:
+            logger.info("Loading local model for fallback...")
+            try:
+                self._load_best_model()
+                self._setup_pipeline()
+                logger.info("Local model loaded successfully for fallback")
+                return True
+            except Exception as e:
+                logger.error(f"Failed to load local model for fallback: {str(e)}")
+                return False
+        return True
+
     def generate_text(self, prompt: str, max_length: int = None) -> str:
         """Generate text using OpenRouter API if available, otherwise local model."""
         if max_length is None:
             max_length = GENERATION_PARAMS["max_length"]
         
         if self.use_openrouter:
-            return self._generate_text_openrouter(prompt, max_length)
+            result = self._generate_text_openrouter(prompt, max_length)
+            # If OpenRouter fails and fallback is enabled, try local model
+            if not result and FALLBACK_TO_LOCAL:
+                logger.info("OpenRouter failed, falling back to local model")
+                if self._ensure_local_model_loaded():
+                    local_result = self._generate_text_local(prompt, max_length)
+                    if local_result:
+                        logger.info("Local model fallback successful")
+                        return local_result
+                    else:
+                        logger.error("Local model fallback also failed")
+                        return ""
+                else:
+                    logger.error("Cannot fallback to local model - failed to load")
+                    return ""
+            return result
         else:
+            # Direct local model usage
+            if not self.current_model_name or not self.model or not self.tokenizer:
+                if not self._ensure_local_model_loaded():
+                    logger.error("Failed to load local model")
+                    return ""
             return self._generate_text_local(prompt, max_length)
     
     def _generate_text_openrouter(self, prompt: str, max_length: int) -> str:
-        """Generate text using OpenRouter API (DeepSeek model)."""
-        try:
-            headers = {
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json"
-            }
-            data = {
-                "model": OPENROUTER_MODEL,
-                "messages": [
-                    {"role": "system", "content": "You are a helpful assistant for educational quiz generation."},
-                    {"role": "user", "content": prompt}
-                ],
-                "max_tokens": max_length,
-                "temperature": GENERATION_PARAMS["temperature"],
-                "top_p": GENERATION_PARAMS["top_p"]
-            }
-            response = requests.post(OPENROUTER_API_URL, headers=headers, data=json.dumps(data), timeout=60)
-            try:
-                response.raise_for_status()
-            except requests.HTTPError as e:
-                logger.error(f"OpenRouter API error: {e}. Response content: {response.text}")
-                return ""
-            result = response.json()
-            # Extract the assistant's reply
-            reply = result["choices"][0]["message"]["content"]
-            return self._clean_generated_text(reply)
-        except Exception as e:
-            logger.error(f"Error in OpenRouter API generation: {str(e)}")
+        """Generate text using OpenRouter API with multi-model fallback."""
+        max_retries_per_model = 1  # Reduced from 2 to minimize rate limiting
+        retry_delay = 2  # Increased delay to be more respectful of rate limits
+        
+        # Try each OpenRouter model in order
+        for model_index, model_name in enumerate(OPENROUTER_MODELS_TO_TRY):
+            logger.info(f"Trying OpenRouter model {model_index + 1}/{len(OPENROUTER_MODELS_TO_TRY)}: {model_name}")
+            
+            for attempt in range(max_retries_per_model):
+                try:
+                    headers = {
+                        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                        "Content-Type": "application/json"
+                    }
+                    data = {
+                        "model": model_name,
+                        "messages": [
+                            {"role": "system", "content": "You are a helpful assistant for educational content generation."},
+                            {"role": "user", "content": prompt}
+                        ],
+                        "max_tokens": max_length,
+                        "temperature": GENERATION_PARAMS["temperature"],
+                        "top_p": GENERATION_PARAMS["top_p"]
+                    }
+                    
+                    response = requests.post(OPENROUTER_API_URL, headers=headers, data=json.dumps(data), timeout=60)
+                    
+                    if response.status_code == 429:  # Rate limited
+                        logger.warning(f"Rate limited on {model_name}. Trying next model...")
+                        break  # Move to next model immediately instead of retrying
+                    
+                    try:
+                        response.raise_for_status()
+                    except requests.HTTPError as e:
+                        logger.error(f"OpenRouter API error on {model_name}: {e}. Response content: {response.text}")
+                        if attempt < max_retries_per_model - 1:
+                            logger.warning(f"Retrying {model_name}... (attempt {attempt + 1}/{max_retries_per_model})")
+                            continue
+                        else:
+                            logger.warning(f"Failed on {model_name}. Trying next model...")
+                            break  # Try next model
+                    
+                    # Success! Extract and return the response
+                    result = response.json()
+                    reply = result["choices"][0]["message"]["content"]
+                    logger.info(f"Successfully generated text using {model_name}")
+                    return self._clean_generated_text(reply)
+                    
+                except Exception as e:
+                    logger.error(f"Error with {model_name} (attempt {attempt + 1}): {str(e)}")
+                    if attempt < max_retries_per_model - 1:
+                        logger.warning(f"Retrying {model_name}... (attempt {attempt + 1}/{max_retries_per_model})")
+                        continue
+                    else:
+                        logger.warning(f"Failed on {model_name}. Trying next model...")
+                        break  # Try next model
+        
+        # If we get here, all OpenRouter models failed
+        logger.error("All OpenRouter models failed. Falling back to local model.")
+        if FALLBACK_TO_LOCAL:
+            return self._generate_text_local(prompt, max_length)
+        else:
             return ""
     
     def _generate_text_local(self, prompt: str, max_length: int) -> str:
         try:
+            # Check if we have a loaded model
+            if not self.current_model_name or not self.model or not self.tokenizer:
+                logger.error("No local model loaded. Cannot generate text locally.")
+                return ""
+            
             # Handle different model types with appropriate prompts
             if "deepseek" in self.current_model_name:
                 formatted_prompt = f"<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
@@ -101,6 +174,7 @@ class ModelManager:
                 formatted_prompt = prompt
             else:
                 formatted_prompt = f"Instruction: {prompt}\n\nResponse:"
+            
             inputs = self.tokenizer(
                 formatted_prompt,
                 return_tensors="pt",
@@ -108,6 +182,7 @@ class ModelManager:
                 truncation=True,
                 padding=True
             )
+            
             with torch.no_grad():
                 if "flan-t5" in self.current_model_name:
                     outputs = self.model.generate(
@@ -135,13 +210,16 @@ class ModelManager:
                         eos_token_id=self.tokenizer.eos_token_id,
                         no_repeat_ngram_size=GENERATION_PARAMS["no_repeat_ngram_size"]
                     )
+            
             generated_text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
             if "flan-t5" not in self.current_model_name:
                 generated_text = generated_text[len(formatted_prompt):].strip()
             generated_text = self._clean_generated_text(generated_text)
+            logger.info(f"Successfully generated text using local model: {self.current_model_name}")
             return generated_text
+            
         except Exception as e:
-            logger.error(f"Error in model generation: {str(e)}")
+            logger.error(f"Error in local model generation: {str(e)}")
             return ""
     
     def _clean_generated_text(self, text: str) -> str:
