@@ -196,9 +196,9 @@ class ExerciseGenerator:
                     important_words = [w for w in words if len(w) > 4 and w.isalpha()]
                     if important_words:
                         word_to_blank = random.choice(important_words)
-                        exercise_text = sentence.replace(word_to_blank, "______")
+                        question = sentence.replace(word_to_blank, "______")
                         # Ensure the blank is not at the very start or end
-                        if exercise_text.startswith('______') or exercise_text.endswith('______'):
+                        if question.startswith('______') or question.endswith('______'):
                             continue
                         # Ensure the answer is not truncated
                         if len(word_to_blank) < 2 or word_to_blank[-1] in ',;:':
@@ -213,7 +213,7 @@ class ExerciseGenerator:
                         exercises.append({
                             "type": "fill_blank",
                             "instruction": instruction,
-                            "exercise_text": exercise_text,
+                            "question": question,
                             "answer": word_to_blank,
                             "difficulty": difficulty
                         })
@@ -241,7 +241,7 @@ class ExerciseGenerator:
                 exercises.append({
                     "type": "true_false",
                     "instruction": instruction,
-                    "exercise_text": sentence,
+                    "question": sentence,
                     "answer": "True",  # Assuming text content is factual
                     "difficulty": difficulty
                 })
@@ -270,7 +270,7 @@ class ExerciseGenerator:
                 exercises.append({
                     "type": "short_answer",
                     "instruction": "Answer the following question:",
-                    "exercise_text": question,
+                    "question": question,
                     "answer": relevant_sentence,
                     "difficulty": difficulty
                 })
