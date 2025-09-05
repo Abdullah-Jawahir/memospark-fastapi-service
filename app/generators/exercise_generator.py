@@ -70,7 +70,7 @@ class ExerciseGenerator:
                     exercises.append({
                         'type': 'fill_blank',
                         'question': sent,  # Main question text
-                        'instruction': 'Fill in the blank.',  # Generic instruction
+                        'instruction': self._get_localized_instruction('fill_blank', language),
                         'answer': ans,
                         'difficulty': difficulty
                     })
@@ -88,7 +88,7 @@ class ExerciseGenerator:
                     exercises.append({
                         'type': 'true_false',
                         'question': sent,  # Main question text
-                        'instruction': 'Determine if the statement is true or false.',  # Generic instruction
+                        'instruction': self._get_localized_instruction('true_false', language),
                         'answer': ans.capitalize(),
                         'difficulty': difficulty
                     })
@@ -106,7 +106,7 @@ class ExerciseGenerator:
                     exercises.append({
                         'type': 'short_answer',
                         'question': q,  # Main question text
-                        'instruction': 'Answer in 2-3 sentences.',  # Generic instruction
+                        'instruction': self._get_localized_instruction('short_answer', language),
                         'answer': ans,
                         'difficulty': difficulty
                     })
@@ -312,3 +312,31 @@ class ExerciseGenerator:
         except Exception as e:
             logger.warning(f"Error creating matching exercise: {str(e)}")
             return None 
+
+    def _get_localized_instruction(self, exercise_type: str, language: str = "en") -> str:
+        """Get localized instruction based on exercise type and language."""
+        instructions = {
+            'en': {
+                'fill_blank': 'Fill in the blank.',
+                'true_false': 'Determine if the statement is true or false.',
+                'short_answer': 'Answer in 2-3 sentences.',
+                'matching': 'Match the concepts with their definitions.',
+                'default': 'Complete the exercise.'
+            },
+            'si': {
+                'fill_blank': 'හිස් තැන පුරවන්න.',
+                'true_false': 'ප්‍රකාශය සත්‍ය හෝ අසත්‍ය දැයි තීරණය කරන්න.',
+                'short_answer': 'වාක්‍ය 2-3 කින් පිළිතුරු දෙන්න.',
+                'matching': 'සංකල්ප ඒවායේ අර්ථ දැක්වීම් සමඟ ගැලපීම.',
+                'default': 'අභ්‍යාසය සම්පූර්ණ කරන්න.'
+            },
+            'ta': {
+                'fill_blank': 'வெற்று இடத்தை நிரப்பவும்.',
+                'true_false': 'கூற்று உண்மை அல்லது பொய் என்பதை தீர்மானிக்கவும்.',
+                'short_answer': '2-3 வாக்கியங்களில் பதிலளிக்கவும்.',
+                'matching': 'கருத்துகளை அவற்றின் வரையறைகளுடன் பொருத்தவும்.',
+                'default': 'பயிற்சியை முடிக்கவும்.'
+            }
+        }
+        
+        return instructions.get(language, {}).get(exercise_type) or instructions['en'].get(exercise_type) or instructions['en']['default']
