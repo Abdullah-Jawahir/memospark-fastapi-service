@@ -69,7 +69,8 @@ class ExerciseGenerator:
                 if '______' in sent and len(ans) > 1:
                     exercises.append({
                         'type': 'fill_blank',
-                        'instruction': sent,
+                        'question': sent,  # Main question text
+                        'instruction': self._get_localized_instruction('fill_blank', language),
                         'answer': ans,
                         'difficulty': difficulty
                     })
@@ -86,7 +87,8 @@ class ExerciseGenerator:
                 if ans.lower() in ['true', 'false']:
                     exercises.append({
                         'type': 'true_false',
-                        'instruction': sent,
+                        'question': sent,  # Main question text
+                        'instruction': self._get_localized_instruction('true_false', language),
                         'answer': ans.capitalize(),
                         'difficulty': difficulty
                     })
@@ -103,7 +105,8 @@ class ExerciseGenerator:
                 if len(q) > 10 and len(ans) > 1:
                     exercises.append({
                         'type': 'short_answer',
-                        'instruction': q,
+                        'question': q,  # Main question text
+                        'instruction': self._get_localized_instruction('short_answer', language),
                         'answer': ans,
                         'difficulty': difficulty
                     })
@@ -193,9 +196,9 @@ class ExerciseGenerator:
                     important_words = [w for w in words if len(w) > 4 and w.isalpha()]
                     if important_words:
                         word_to_blank = random.choice(important_words)
-                        exercise_text = sentence.replace(word_to_blank, "______")
+                        question = sentence.replace(word_to_blank, "______")
                         # Ensure the blank is not at the very start or end
-                        if exercise_text.startswith('______') or exercise_text.endswith('______'):
+                        if question.startswith('______') or question.endswith('______'):
                             continue
                         # Ensure the answer is not truncated
                         if len(word_to_blank) < 2 or word_to_blank[-1] in ',;:':
@@ -210,7 +213,7 @@ class ExerciseGenerator:
                         exercises.append({
                             "type": "fill_blank",
                             "instruction": instruction,
-                            "exercise_text": exercise_text,
+                            "question": question,
                             "answer": word_to_blank,
                             "difficulty": difficulty
                         })
@@ -238,7 +241,7 @@ class ExerciseGenerator:
                 exercises.append({
                     "type": "true_false",
                     "instruction": instruction,
-                    "exercise_text": sentence,
+                    "question": sentence,
                     "answer": "True",  # Assuming text content is factual
                     "difficulty": difficulty
                 })
@@ -267,7 +270,7 @@ class ExerciseGenerator:
                 exercises.append({
                     "type": "short_answer",
                     "instruction": "Answer the following question:",
-                    "exercise_text": question,
+                    "question": question,
                     "answer": relevant_sentence,
                     "difficulty": difficulty
                 })
@@ -309,3 +312,31 @@ class ExerciseGenerator:
         except Exception as e:
             logger.warning(f"Error creating matching exercise: {str(e)}")
             return None 
+
+    def _get_localized_instruction(self, exercise_type: str, language: str = "en") -> str:
+        """Get localized instruction based on exercise type and language."""
+        instructions = {
+            'en': {
+                'fill_blank': 'Fill in the blank.',
+                'true_false': 'Determine if the statement is true or false.',
+                'short_answer': 'Answer in 2-3 sentences.',
+                'matching': 'Match the concepts with their definitions.',
+                'default': 'Complete the exercise.'
+            },
+            'si': {
+                'fill_blank': 'හිස් තැන පුරවන්න.',
+                'true_false': 'ප්‍රකාශය සත්‍ය හෝ අසත්‍ය දැයි තීරණය කරන්න.',
+                'short_answer': 'වාක්‍ය 2-3 කින් පිළිතුරු දෙන්න.',
+                'matching': 'සංකල්ප ඒවායේ අර්ථ දැක්වීම් සමඟ ගැලපීම.',
+                'default': 'අභ්‍යාසය සම්පූර්ණ කරන්න.'
+            },
+            'ta': {
+                'fill_blank': 'வெற்று இடத்தை நிரப்பவும்.',
+                'true_false': 'கூற்று உண்மை அல்லது பொய் என்பதை தீர்மானிக்கவும்.',
+                'short_answer': '2-3 வாக்கியங்களில் பதிலளிக்கவும்.',
+                'matching': 'கருத்துகளை அவற்றின் வரையறைகளுடன் பொருத்தவும்.',
+                'default': 'பயிற்சியை முடிக்கவும்.'
+            }
+        }
+        
+        return instructions.get(language, {}).get(exercise_type) or instructions['en'].get(exercise_type) or instructions['en']['default']
