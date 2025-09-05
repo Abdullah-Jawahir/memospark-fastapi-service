@@ -69,7 +69,8 @@ class ExerciseGenerator:
                 if '______' in sent and len(ans) > 1:
                     exercises.append({
                         'type': 'fill_blank',
-                        'instruction': sent,
+                        'question': sent,  # Main question text
+                        'instruction': 'Fill in the blank.',  # Generic instruction
                         'answer': ans,
                         'difficulty': difficulty
                     })
@@ -86,7 +87,8 @@ class ExerciseGenerator:
                 if ans.lower() in ['true', 'false']:
                     exercises.append({
                         'type': 'true_false',
-                        'instruction': sent,
+                        'question': sent,  # Main question text
+                        'instruction': 'Determine if the statement is true or false.',  # Generic instruction
                         'answer': ans.capitalize(),
                         'difficulty': difficulty
                     })
@@ -103,7 +105,8 @@ class ExerciseGenerator:
                 if len(q) > 10 and len(ans) > 1:
                     exercises.append({
                         'type': 'short_answer',
-                        'instruction': q,
+                        'question': q,  # Main question text
+                        'instruction': 'Answer in 2-3 sentences.',  # Generic instruction
                         'answer': ans,
                         'difficulty': difficulty
                     })
