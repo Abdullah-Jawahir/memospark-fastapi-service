@@ -184,28 +184,9 @@ The MemoSpark FastAPI Service is the core AI engine that powers intelligent docu
 Create a `.env` file in the root directory:
 
 ```env
-# Server Configuration
-HOST=0.0.0.0
-PORT=8000
-DEBUG=True
-
-# Model Configuration
-MODEL_CACHE_DIR=./model_cache
-PRIMARY_MODEL=distilgpt2
-FALLBACK_MODEL=gpt2
-
-# Processing Configuration
-MAX_FILE_SIZE=10485760  # 10MB
-CHUNK_SIZE=512
-MAX_CHUNKS=10
-
-# Language Configuration
-DEFAULT_LANGUAGE=en
-SUPPORTED_LANGUAGES=en,si,ta
-
-# Logging Configuration
-LOG_LEVEL=INFO
-LOG_FILE=logs/fastapi.log
+OPENROUTER_API_KEY=your-openrouter-key-here
+ENABLE_OPENROUTER=true
+FALLBACK_TO_LOCAL=false
 ```
 
 ```
