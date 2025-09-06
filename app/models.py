@@ -1,6 +1,6 @@
 import torch
 from transformers import pipeline, AutoTokenizer, AutoModelForSeq2SeqLM, AutoModelForCausalLM
-from .config import MODELS_TO_TRY, CACHE_DIR, GENERATION_PARAMS, OPENROUTER_API_KEY, OPENROUTER_API_URL, OPENROUTER_MODEL, OPENROUTER_MODELS_TO_TRY, ENABLE_OPENROUTER, ENABLE_GEMINI, FALLBACK_TO_LOCAL
+from .config import MODELS_TO_TRY, CACHE_DIR, GENERATION_PARAMS, OPENROUTER_API_KEY, OPENROUTER_API_URL, OPENROUTER_MODEL, OPENROUTER_MODELS_TO_TRY, ENABLE_OPENROUTER, ENABLE_GEMINI, FALLBACK_TO_LOCAL, AI_MODEL_PRIORITY
 from .logger import logger
 import re
 import requests
@@ -87,52 +87,61 @@ class ModelManager:
         return True
 
     def generate_text(self, prompt: str, max_length: int | None = None) -> str:
-        """Generate text using OpenRouter API if available, otherwise local model."""
+        """Generate text using configurable AI model priority."""
         if max_length is None:
             max_length = GENERATION_PARAMS["max_length"]
         
         # At this point, max_length is guaranteed to be an int
         assert isinstance(max_length, int), "max_length must be an int at this point"
         
-        if self.use_openrouter:
-            logger.info("Trying OpenRouter API...")
-            result = self._generate_text_openrouter(prompt, max_length)
+        logger.info(f"🎯 AI Model Priority Order: {' → '.join(AI_MODEL_PRIORITY)}")
+        
+        # Try each AI service in the configured priority order
+        for priority_index, model_type in enumerate(AI_MODEL_PRIORITY):
+            logger.info(f"🔄 Trying AI service {priority_index + 1}/{len(AI_MODEL_PRIORITY)}: {model_type}")
             
-            # If OpenRouter fails, try Gemini before local fallback
-            if not result and self.gemini_client:
-                logger.info("OpenRouter failed, trying Gemini API...")
-                result = self._generate_text_gemini(prompt, max_length)
+            result = ""
+            
+            if model_type == "openrouter" and ENABLE_OPENROUTER:
+                logger.info("📡 Attempting OpenRouter API...")
+                result = self._generate_text_openrouter(prompt, max_length)
                 if result:
-                    logger.info("✅ Gemini API fallback successful")
+                    logger.info("✅ OpenRouter successful")
                     return result
                 else:
-                    logger.warning("❌ Gemini API fallback also failed")
-            
-            # If both OpenRouter and Gemini fail, try local model if enabled
-            if not result and FALLBACK_TO_LOCAL:
-                logger.info("All cloud APIs failed, falling back to local model...")
-                if self._ensure_local_model_loaded():
-                    local_result = self._generate_text_local(prompt, max_length)
-                    if local_result:
-                        logger.info("✅ Local model fallback successful")
-                        return local_result
-                    else:
-                        logger.error("❌ Local model fallback also failed")
-                        return ""
+                    logger.warning("❌ OpenRouter failed or returned empty result")
+                    
+            elif model_type == "gemini" and self.gemini_client:
+                logger.info("🌟 Attempting Gemini API...")
+                result = self._generate_text_gemini(prompt, max_length)
+                if result:
+                    logger.info("✅ Gemini successful")
+                    return result
                 else:
-                    logger.error("❌ Cannot fallback to local model - failed to load")
-                    return ""
-            elif not result:
-                logger.error("❌ All generation methods failed")
-                return ""
-            return result
-        else:
-            # Direct local model usage
-            if not self.current_model_name or not self.model or not self.tokenizer:
-                if not self._ensure_local_model_loaded():
-                    logger.error("Failed to load local model")
-                    return ""
-            return self._generate_text_local(prompt, max_length)
+                    logger.warning("❌ Gemini failed or returned empty result")
+                    
+            elif model_type == "local" and FALLBACK_TO_LOCAL:
+                logger.info("🏠 Attempting local model...")
+                if self._ensure_local_model_loaded():
+                    result = self._generate_text_local(prompt, max_length)
+                    if result:
+                        logger.info("✅ Local model successful")
+                        return result
+                    else:
+                        logger.warning("❌ Local model failed or returned empty result")
+                else:
+                    logger.warning("❌ Cannot load local model")
+                    
+            elif model_type == "rule_based":
+                # Rule-based fallback can be implemented here if needed
+                logger.info("📝 Rule-based generation not implemented (by design)")
+                
+            else:
+                logger.warning(f"⚠️ Skipping {model_type}: not enabled or not available")
+        
+        # If all methods failed
+        logger.error("💥 All configured AI services failed to generate text")
+        return ""
     
     def _generate_text_gemini(self, prompt: str, max_length: int) -> str:
         """Generate text using Gemini API."""
