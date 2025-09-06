@@ -1,6 +1,6 @@
 import torch
 from transformers import pipeline, AutoTokenizer, AutoModelForSeq2SeqLM, AutoModelForCausalLM
-from .config import MODELS_TO_TRY, CACHE_DIR, GENERATION_PARAMS, OPENROUTER_API_KEY, OPENROUTER_API_URL, OPENROUTER_MODEL, OPENROUTER_MODELS_TO_TRY, ENABLE_OPENROUTER, FALLBACK_TO_LOCAL
+from .config import MODELS_TO_TRY, CACHE_DIR, GENERATION_PARAMS, OPENROUTER_API_KEY, OPENROUTER_API_URL, OPENROUTER_MODEL, OPENROUTER_MODELS_TO_TRY, ENABLE_OPENROUTER, ENABLE_GEMINI, FALLBACK_TO_LOCAL
 from .logger import logger
 import re
 import requests
@@ -15,9 +15,28 @@ class ModelManager:
         self.current_model_name = None
         self.question_generator = None
         self.use_openrouter = ENABLE_OPENROUTER
+        self.gemini_client = None
+        
+        # Initialize Gemini client if enabled
+        if ENABLE_GEMINI:
+            self._init_gemini_client()
+        
         if not self.use_openrouter:
             self._load_best_model()
             self._setup_pipeline()
+    
+    def _init_gemini_client(self):
+        """Initialize Gemini API client as fallback."""
+        try:
+            from .generators.gemini_client import create_gemini_client
+            self.gemini_client = create_gemini_client()
+            if self.gemini_client:
+                logger.info("Gemini client initialized successfully")
+            else:
+                logger.warning("Failed to initialize Gemini client")
+        except Exception as e:
+            logger.warning(f"Could not initialize Gemini client: {e}")
+            self.gemini_client = None
     
     def _load_best_model(self):
         """Load the best available model for text generation tasks."""
@@ -41,7 +60,7 @@ class ModelManager:
         """Setup the question generation pipeline."""
         try:
             self.question_generator = pipeline(
-                "text2text-generation" if "flan-t5" in self.current_model_name else "text-generation",
+                "text2text-generation" if self.current_model_name and "flan-t5" in self.current_model_name else "text-generation",
                 model=self.model,
                 tokenizer=self.tokenizer,
                 device=-1  # Use CPU
@@ -65,16 +84,30 @@ class ModelManager:
                 return False
         return True
 
-    def generate_text(self, prompt: str, max_length: int = None) -> str:
+    def generate_text(self, prompt: str, max_length: int | None = None) -> str:
         """Generate text using OpenRouter API if available, otherwise local model."""
         if max_length is None:
             max_length = GENERATION_PARAMS["max_length"]
         
+        # At this point, max_length is guaranteed to be an int
+        assert isinstance(max_length, int), "max_length must be an int at this point"
+        
         if self.use_openrouter:
             result = self._generate_text_openrouter(prompt, max_length)
-            # If OpenRouter fails and fallback is enabled, try local model
+            
+            # If OpenRouter fails, try Gemini before local fallback
+            if not result and self.gemini_client:
+                logger.info("OpenRouter failed, trying Gemini API...")
+                result = self._generate_text_gemini(prompt, max_length)
+                if result:
+                    logger.info("Gemini API fallback successful")
+                    return result
+                else:
+                    logger.warning("Gemini API fallback also failed")
+            
+            # If both OpenRouter and Gemini fail, try local model if enabled
             if not result and FALLBACK_TO_LOCAL:
-                logger.info("OpenRouter failed, falling back to local model")
+                logger.info("All cloud APIs failed, falling back to local model")
                 if self._ensure_local_model_loaded():
                     local_result = self._generate_text_local(prompt, max_length)
                     if local_result:
@@ -95,10 +128,23 @@ class ModelManager:
                     return ""
             return self._generate_text_local(prompt, max_length)
     
+    def _generate_text_gemini(self, prompt: str, max_length: int) -> str:
+        """Generate text using Gemini API."""
+        if not self.gemini_client:
+            logger.warning("Gemini client not available")
+            return ""
+        
+        try:
+            result = self.gemini_client.generate_text(prompt, max_length)
+            return result if result else ""
+        except Exception as e:
+            logger.error(f"Error generating text with Gemini: {e}")
+            return ""
+    
     def _generate_text_openrouter(self, prompt: str, max_length: int) -> str:
         """Generate text using OpenRouter API with multi-model fallback."""
-        max_retries_per_model = 1  # Reduced from 2 to minimize rate limiting
-        retry_delay = 2  # Increased delay to be more respectful of rate limits
+        max_retries_per_model = 2  # Give each model 2 chances
+        retry_delay = 5  # Wait 5 seconds between retries to be respectful of rate limits
         
         # Try each OpenRouter model in order
         for model_index, model_name in enumerate(OPENROUTER_MODELS_TO_TRY):
@@ -124,8 +170,14 @@ class ModelManager:
                     response = requests.post(OPENROUTER_API_URL, headers=headers, data=json.dumps(data), timeout=60)
                     
                     if response.status_code == 429:  # Rate limited
-                        logger.warning(f"Rate limited on {model_name}. Trying next model...")
-                        break  # Move to next model immediately instead of retrying
+                        if attempt < max_retries_per_model - 1:
+                            logger.warning(f"Rate limited on {model_name}. Waiting {retry_delay} seconds before retry...")
+                            import time
+                            time.sleep(retry_delay)
+                            continue
+                        else:
+                            logger.warning(f"Rate limited on {model_name}. Trying next model...")
+                            break  # Move to next model after exhausting retries
                     
                     try:
                         response.raise_for_status()
@@ -133,6 +185,8 @@ class ModelManager:
                         logger.error(f"OpenRouter API error on {model_name}: {e}. Response content: {response.text}")
                         if attempt < max_retries_per_model - 1:
                             logger.warning(f"Retrying {model_name}... (attempt {attempt + 1}/{max_retries_per_model})")
+                            import time
+                            time.sleep(retry_delay)
                             continue
                         else:
                             logger.warning(f"Failed on {model_name}. Trying next model...")
@@ -168,9 +222,9 @@ class ModelManager:
                 return ""
             
             # Handle different model types with appropriate prompts
-            if "deepseek" in self.current_model_name:
+            if self.current_model_name and "deepseek" in self.current_model_name:
                 formatted_prompt = f"<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
-            elif "flan-t5" in self.current_model_name:
+            elif self.current_model_name and "flan-t5" in self.current_model_name:
                 formatted_prompt = prompt
             else:
                 formatted_prompt = f"Instruction: {prompt}\n\nResponse:"
@@ -184,7 +238,7 @@ class ModelManager:
             )
             
             with torch.no_grad():
-                if "flan-t5" in self.current_model_name:
+                if self.current_model_name and "flan-t5" in self.current_model_name:
                     outputs = self.model.generate(
                         inputs["input_ids"],
                         max_length=max_length,
@@ -212,7 +266,7 @@ class ModelManager:
                     )
             
             generated_text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-            if "flan-t5" not in self.current_model_name:
+            if not self.current_model_name or "flan-t5" not in self.current_model_name:
                 generated_text = generated_text[len(formatted_prompt):].strip()
             generated_text = self._clean_generated_text(generated_text)
             logger.info(f"Successfully generated text using local model: {self.current_model_name}")
@@ -245,7 +299,7 @@ class ModelManager:
         else:
             return {
                 "model_name": self.current_model_name,
-                "model_type": "seq2seq" if "flan-t5" in self.current_model_name else "causal",
+                "model_type": "seq2seq" if self.current_model_name and "flan-t5" in self.current_model_name else "causal",
                 "pipeline_loaded": self.question_generator is not None
             }
 
