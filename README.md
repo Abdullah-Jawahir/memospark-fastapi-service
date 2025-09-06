@@ -18,7 +18,7 @@
 ## 📋 Table of Contents
 
 - [🌟 Overview](#-overview)
-- [✨ Key Features](#-key-features)
+- [✨ Main Features](#-main-features)
 - [🧠 AI Capabilities](#-ai-capabilities)
 - [🛠️ Tech Stack](#️-tech-stack)
 - [🚀 Quick Start](#-quick-start)
