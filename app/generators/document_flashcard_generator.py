@@ -28,10 +28,18 @@ class DocumentFlashcardGenerator:
                 logger.info("Structured generation failed, trying simple Q&A generation...")
                 flashcards = self._generate_simple_flashcards(text, language, difficulty, count)
             
-            # If still no flashcards, use rule-based generation
+            # If still no flashcards, check if we have any AI fallbacks available
             if not flashcards:
-                logger.info("Simple generation failed, using rule-based generation...")
-                flashcards = self._generate_rule_based_flashcards(text, language, difficulty, count)
+                logger.warning("All AI-based generation attempts failed.")
+                # The ModelManager will have already tried OpenRouter -> Gemini -> Local
+                # If we get here, all AI methods have been exhausted
+                from ..config import ENABLE_RULE_BASED_FALLBACK
+                if ENABLE_RULE_BASED_FALLBACK:
+                    logger.info("Using rule-based generation as final fallback...")
+                    flashcards = self._generate_rule_based_flashcards(text, language, difficulty, count)
+                else:
+                    logger.warning("Rule-based fallback disabled. Returning empty content to maintain quality.")
+                    return []
             
             # Clean and validate flashcards
             cleaned_flashcards = self._clean_and_validate_flashcards(flashcards, count)
@@ -41,8 +49,14 @@ class DocumentFlashcardGenerator:
             
         except Exception as e:
             logger.error(f"Error generating flashcards: {str(e)}")
-            logger.info("Falling back to rule-based flashcard generation...")
-            return self._generate_rule_based_flashcards(text, language, difficulty, count)
+            # Final fallback - only use rule-based if explicitly enabled
+            from ..config import ENABLE_RULE_BASED_FALLBACK
+            if ENABLE_RULE_BASED_FALLBACK:
+                logger.info("Using rule-based generation as final fallback...")
+                return self._generate_rule_based_flashcards(text, language, difficulty, count)
+            else:
+                logger.warning("All generation methods failed. Returning empty content to maintain quality.")
+                return []
     
     def _generate_structured_flashcards(self, text: str, language: str, difficulty: str, count: int) -> List[Dict[str, Any]]:
         """Generate flashcards using structured JSON prompt."""

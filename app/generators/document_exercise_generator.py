@@ -28,10 +28,18 @@ class DocumentExerciseGenerator:
                 logger.info("Structured generation failed, trying simple format generation...")
                 exercises = self._generate_simple_exercises(text, language, difficulty, count)
             
-            # If still no exercises, use rule-based generation
+            # If still no exercises, check if we have any AI fallbacks available
             if not exercises:
-                logger.info("Simple generation failed, using rule-based generation...")
-                exercises = self._generate_rule_based_exercises(text, language, difficulty, count)
+                logger.warning("All AI-based generation attempts failed.")
+                # The ModelManager will have already tried OpenRouter -> Gemini -> Local
+                # If we get here, all AI methods have been exhausted
+                from ..config import ENABLE_RULE_BASED_FALLBACK
+                if ENABLE_RULE_BASED_FALLBACK:
+                    logger.info("Using rule-based generation as final fallback...")
+                    exercises = self._generate_rule_based_exercises(text, language, difficulty, count)
+                else:
+                    logger.warning("Rule-based fallback disabled. Returning empty content to maintain quality.")
+                    return []
             
             # Clean and validate exercises
             cleaned_exercises = self._clean_and_validate_exercises(exercises, count)
@@ -41,8 +49,14 @@ class DocumentExerciseGenerator:
             
         except Exception as e:
             logger.error(f"Error generating exercises: {str(e)}")
-            logger.info("Falling back to rule-based exercise generation...")
-            return self._generate_rule_based_exercises(text, language, difficulty, count)
+            # Final fallback - only use rule-based if explicitly enabled
+            from ..config import ENABLE_RULE_BASED_FALLBACK
+            if ENABLE_RULE_BASED_FALLBACK:
+                logger.info("Using rule-based generation as final fallback...")
+                return self._generate_rule_based_exercises(text, language, difficulty, count)
+            else:
+                logger.warning("All generation methods failed. Returning empty content to maintain quality.")
+                return []
     
     def _generate_structured_exercises(self, text: str, language: str, difficulty: str, count: int) -> List[Dict[str, Any]]:
         """Generate exercises using structured JSON prompt."""

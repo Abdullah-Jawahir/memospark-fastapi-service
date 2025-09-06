@@ -25,18 +25,37 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODEL = "deepseek/deepseek-chat-v3-0324:free"
 
-# Multiple OpenRouter models to try in order (all free tier)
+# Google Gemini API config
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+# AI Model Priority Configuration
+# Configurable priority order for AI services
+# Options: "openrouter", "gemini", "local", "rule_based"
+# Default: openrouter -> gemini -> local -> rule_based
+AI_MODEL_PRIORITY = os.getenv("AI_MODEL_PRIORITY", "openrouter,gemini,local,rule_based").split(",")
+
+# Clean up any whitespace from the priority list
+AI_MODEL_PRIORITY = [model.strip().lower() for model in AI_MODEL_PRIORITY]
+
+# Validate priority configuration
+VALID_MODEL_TYPES = {"openrouter", "gemini", "local", "rule_based"}
+AI_MODEL_PRIORITY = [model for model in AI_MODEL_PRIORITY if model in VALID_MODEL_TYPES]
+
+# Ensure we have at least one fallback if list is empty or invalid
+if not AI_MODEL_PRIORITY:
+    AI_MODEL_PRIORITY = ["openrouter", "gemini", "local", "rule_based"]
+
+# Multiple OpenRouter models to try in order (only working free tier models)
 OPENROUTER_MODELS_TO_TRY = [
-    "deepseek/deepseek-chat-v3-0324:free",  # Primary model
-    "google/gemma-2-9b-it:free",  # Alternative 1 (confirmed working)
-    "microsoft/phi-3.5-mini-4k-instruct",  # Alternative 2
-    "mistralai/mistral-7b-instruct:free",  # Alternative 3
-    "nousresearch/nous-hermes-2-mixtral-8x7b-dpo",  # Alternative 4
-    "meta-llama/llama-3.1-8b-instruct",  # Alternative 5 (if available)
+    "deepseek/deepseek-chat-v3-0324:free",  # Primary model - confirmed working
+    "google/gemma-2-9b-it:free",  # Alternative - confirmed working
 ]
 
 ENABLE_OPENROUTER = bool(OPENROUTER_API_KEY) and os.getenv("ENABLE_OPENROUTER", "true").lower() == "true"
+ENABLE_GEMINI = bool(GEMINI_API_KEY) and os.getenv("ENABLE_GEMINI", "true").lower() == "true"
 FALLBACK_TO_LOCAL = os.getenv("FALLBACK_TO_LOCAL", "true").lower() == "true"
+# Disable rule-based fallback for document processing to avoid irrelevant content
+ENABLE_RULE_BASED_FALLBACK = os.getenv("ENABLE_RULE_BASED_FALLBACK", "false").lower() == "true"
 
 # Model configurations
 MODEL_CONFIGS = {
@@ -78,7 +97,7 @@ LANGUAGE_PROMPTS = {
 }
 
 # Supported file types
-SUPPORTED_FILE_TYPES = ["pdf", "docx", "pptx"]
+SUPPORTED_FILE_TYPES = ["pdf", "docx", "pptx", "txt"]
 
 # Content generation limits
 GENERATION_LIMITS = {

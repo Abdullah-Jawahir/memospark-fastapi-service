@@ -65,6 +65,30 @@ def extract_text_from_pptx(file_content: bytes) -> str:
         logger.error(error_msg, exc_info=True)
         raise HTTPException(status_code=400, detail="Error processing PPTX file")
 
+def extract_text_from_txt(file_content: bytes) -> str:
+    """Extract text from TXT file."""
+    try:
+        # Try to decode the text with common encodings
+        for encoding in ['utf-8', 'utf-8-sig', 'latin-1', 'cp1252']:
+            try:
+                text = file_content.decode(encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+        else:
+            # If all encodings fail, use utf-8 with error handling
+            text = file_content.decode('utf-8', errors='replace')
+        
+        # Clean the extracted text
+        text = clean_text(text)
+        
+        logger.info(f"Successfully extracted {len(text)} characters from TXT")
+        return text
+    except Exception as e:
+        error_msg = f"Error extracting text from TXT: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        raise HTTPException(status_code=400, detail="Error processing TXT file")
+
 def extract_text_from_file(file_content: bytes, file_extension: str) -> str:
     """Extract text from file based on its extension."""
     file_extension = file_extension.lower()
@@ -75,5 +99,7 @@ def extract_text_from_file(file_content: bytes, file_extension: str) -> str:
         return extract_text_from_docx(file_content)
     elif file_extension == "pptx":
         return extract_text_from_pptx(file_content)
+    elif file_extension == "txt":
+        return extract_text_from_txt(file_content)
     else:
         raise HTTPException(status_code=400, detail="Unsupported file type") 

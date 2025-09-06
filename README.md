@@ -5,9 +5,11 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-00a699?style=flat&logo=fastapi)
 ![Python](https://img.shields.io/badge/Python-3.8+-blue?style=flat&logo=python)
 ![Transformers](https://img.shields.io/badge/🤗_Transformers-4.26+-yellow?style=flat)
+![OpenRouter](https://img.shields.io/badge/OpenRouter-API-purple?style=flat)
+![Gemini](https://img.shields.io/badge/Google_Gemini-API-blue?style=flat)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
 
-**AI-powered document processing and educational content generation service**
+**AI-powered document processing and educational content generation service with configurable multi-tier AI fallback system**
 
 [🏠 Main Repository](https://github.com/Abdullah-Jawahir/memo-spark) • [🔧 Laravel Service](https://github.com/Abdullah-Jawahir/memospark-laravel-service) • [📖 Documentation](https://github.com/Abdullah-Jawahir/memospark-fastapi-service/wiki)
 
@@ -42,7 +44,7 @@ The MemoSpark FastAPI Service is the core AI engine that powers intelligent docu
 - **📊 Intelligent Analysis**: Extract key concepts and optimize content difficulty
 - **⚡ High Performance**: Asynchronous processing with model caching and optimization
 
-## ✨ Key Features
+## ✨ Main Features
 
 ### 🔧 Document Processing
 
@@ -71,14 +73,56 @@ The MemoSpark FastAPI Service is the core AI engine that powers intelligent docu
 - **Error Handling**: Comprehensive error recovery and logging
 - **Scalable Architecture**: Designed for high-throughput operations
 
-## 🧠 AI Capabilities
+## 🧠 AI Architecture
 
-### 🤖 Transformer Models
+### 🎯 Configurable AI Priority System
 
-- **Primary Models**: DistilGPT-2, GPT-2 variants for text generation
-- **Backup Models**: Rule-based fallback for reliability
-- **Model Management**: Automatic model selection and fallback strategies
-- **Optimization**: Memory-efficient model loading and inference
+The service features a **flexible AI model priority system** that allows you to configure which AI services to try first:
+
+```
+🌟 Gemini First (Recommended)    📡 OpenRouter First (Default)
+gemini → openrouter → local      openrouter → gemini → local
+
+🏠 Privacy First                 ☁️ Cloud Only  
+local → gemini → openrouter      gemini → openrouter
+
+🎯 Single Service                🔧 Custom Configuration
+gemini only                      any combination you prefer
+```
+
+### 🔄 Smart Fallback Strategy
+
+```
+Request → Primary AI Service → Success ✅
+         ↓ (if failed)
+         Secondary AI Service → Success ✅
+         ↓ (if failed)
+         Tertiary AI Service → Success ✅
+         ↓ (if all failed)
+         Error Response ❌
+```
+
+### 🤖 Supported AI Services
+
+#### 🌟 Google Gemini API
+
+- **Model**: `gemini-2.0-flash`
+- **Strengths**: High-quality content, excellent context understanding
+- **Use Case**: Primary choice for quality-focused generation
+
+#### 📡 OpenRouter API (Free Tier)
+
+- **Models**:
+  - `deepseek/deepseek-chat-v3-0324:free` - Primary free model
+  - `google/gemma-2-9b-it:free` - Alternative free model
+- **Strengths**: Multiple model options, good performance
+- **Use Case**: Cost-effective content generation
+
+#### 🏠 Local Transformer Models
+
+- **Models**: DistilGPT-2, GPT-2 variants, Flan-T5
+- **Strengths**: Privacy, offline capability, no API costs
+- **Use Case**: Fallback when cloud APIs are unavailable
 
 ### 📊 Content Intelligence
 
@@ -87,12 +131,63 @@ The MemoSpark FastAPI Service is the core AI engine that powers intelligent docu
 - **Context Understanding**: Semantic relationship analysis
 - **Quality Scoring**: Generated content validation and filtering
 
-### 🎯 Adaptive Learning
+## 🎯 Configurable AI Priority
 
-- **Personalization**: Content difficulty adjustment based on user preferences
-- **Learning Patterns**: Intelligent content sequencing
-- **Progress Tracking**: Performance-based content optimization
-- **Feedback Integration**: Continuous improvement through user interaction data
+### 🔧 Easy Configuration
+
+Change AI priority anytime using the configuration tool:
+
+```bash
+python configure_ai_priority.py
+```
+
+### 📋 Available Presets
+
+1. **🌟 Gemini First** (Recommended for quality)
+
+   ```
+   gemini → openrouter → local → rule_based
+   ```
+
+2. **📡 OpenRouter First** (Default - cost effective)
+
+   ```
+   openrouter → gemini → local → rule_based
+   ```
+
+3. **🏠 Local First** (Privacy focused)
+
+   ```
+   local → gemini → openrouter → rule_based
+   ```
+
+4. **☁️ Cloud Only** (No local fallback)
+
+   ```
+   gemini → openrouter
+   ```
+
+5. **🎯 Single Service Options**
+
+   ```
+   gemini only
+   openrouter only
+   ```
+
+6. **🔧 Custom Configuration**
+
+   ```
+   any combination you prefer
+   ```
+
+### 🌍 Environment Configuration
+
+Set via environment variable in `.env`:
+
+```env
+# AI Model Priority (comma-separated)
+AI_MODEL_PRIORITY=gemini,openrouter,local,rule_based
+```
 
 ## 🛠️ Tech Stack
 
@@ -104,16 +199,25 @@ The MemoSpark FastAPI Service is the core AI engine that powers intelligent docu
 
 ### AI & Machine Learning
 
-- **🤗 Transformers** - State-of-the-art NLP models
+- **🌟 Google Gemini API** - Advanced AI for high-quality content generation
+- **📡 OpenRouter API** - Access to multiple AI models via unified interface
+- **🤗 Transformers** - State-of-the-art NLP models for local processing
 - **🔥 PyTorch** - Deep learning framework
 - **📊 NumPy** - Numerical computing
 - **🔤 Sentence Transformers** - Semantic text embeddings
+
+### HTTP & Async
+
+- **🌐 aiohttp** - Async HTTP client for API requests
+- **📡 requests** - HTTP requests for OpenRouter API
+- **⚡ asyncio** - Asynchronous programming support
 
 ### Document Processing
 
 - **📄 PyMuPDF** - PDF text extraction and processing
 - **📝 python-docx** - Word document manipulation
 - **📊 python-pptx** - PowerPoint presentation processing
+- **📄 TXT Support** - Plain text file processing
 - **🔍 Pydantic** - Data validation and serialization
 
 ### Language & Translation
@@ -123,8 +227,8 @@ The MemoSpark FastAPI Service is the core AI engine that powers intelligent docu
 
 ### Development & Operations
 
-- **📋 Logging** - Comprehensive application logging
-- **🔧 Configuration Management** - Environment-based settings
+- **📋 Logging** - Comprehensive application logging with emoji indicators
+- **🔧 Configuration Management** - Environment-based settings with validation
 - **🧪 Testing Framework** - Comprehensive test suite
 - **📊 Monitoring** - Performance and health monitoring
 
@@ -184,9 +288,12 @@ The MemoSpark FastAPI Service is the core AI engine that powers intelligent docu
 Create a `.env` file in the root directory:
 
 ```env
+GEMINI_API_KEY=your-gemini-api-key-here
+ENABLE_GEMINI=true
 OPENROUTER_API_KEY=your-openrouter-key-here
 ENABLE_OPENROUTER=true
 FALLBACK_TO_LOCAL=false
+ENABLE_RULE_BASED_FALLBACK=false
 ```
 
 ```

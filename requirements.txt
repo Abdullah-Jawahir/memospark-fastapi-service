@@ -10,3 +10,6 @@ numpy<2
 pydantic
 sentence-transformers
 deep-translator
+aiohttp
+requests
+google-generativeai
