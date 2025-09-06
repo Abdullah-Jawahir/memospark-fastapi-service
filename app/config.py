@@ -28,14 +28,10 @@ OPENROUTER_MODEL = "deepseek/deepseek-chat-v3-0324:free"
 # Google Gemini API config
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Multiple OpenRouter models to try in order (all free tier)
+# Multiple OpenRouter models to try in order (only working free tier models)
 OPENROUTER_MODELS_TO_TRY = [
-    "deepseek/deepseek-chat-v3-0324:free",  # Primary model
-    "google/gemma-2-9b-it:free",  # Alternative 1 (confirmed working)
-    "microsoft/phi-3.5-mini-4k-instruct",  # Alternative 2
-    "mistralai/mistral-7b-instruct:free",  # Alternative 3
-    "nousresearch/nous-hermes-2-mixtral-8x7b-dpo",  # Alternative 4
-    "meta-llama/llama-3.1-8b-instruct",  # Alternative 5 (if available)
+    "deepseek/deepseek-chat-v3-0324:free",  # Primary model - confirmed working
+    "google/gemma-2-9b-it:free",  # Alternative - confirmed working
 ]
 
 ENABLE_OPENROUTER = bool(OPENROUTER_API_KEY) and os.getenv("ENABLE_OPENROUTER", "true").lower() == "true"
