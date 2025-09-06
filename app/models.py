@@ -5,6 +5,8 @@ from .logger import logger
 import re
 import requests
 import json
+import aiohttp
+import asyncio
 
 class ModelManager:
     """Manages the loading and usage of AI models or OpenRouter API."""
@@ -93,6 +95,7 @@ class ModelManager:
         assert isinstance(max_length, int), "max_length must be an int at this point"
         
         if self.use_openrouter:
+            logger.info("Trying OpenRouter API...")
             result = self._generate_text_openrouter(prompt, max_length)
             
             # If OpenRouter fails, try Gemini before local fallback
@@ -100,25 +103,28 @@ class ModelManager:
                 logger.info("OpenRouter failed, trying Gemini API...")
                 result = self._generate_text_gemini(prompt, max_length)
                 if result:
-                    logger.info("Gemini API fallback successful")
+                    logger.info("✅ Gemini API fallback successful")
                     return result
                 else:
-                    logger.warning("Gemini API fallback also failed")
+                    logger.warning("❌ Gemini API fallback also failed")
             
             # If both OpenRouter and Gemini fail, try local model if enabled
             if not result and FALLBACK_TO_LOCAL:
-                logger.info("All cloud APIs failed, falling back to local model")
+                logger.info("All cloud APIs failed, falling back to local model...")
                 if self._ensure_local_model_loaded():
                     local_result = self._generate_text_local(prompt, max_length)
                     if local_result:
-                        logger.info("Local model fallback successful")
+                        logger.info("✅ Local model fallback successful")
                         return local_result
                     else:
-                        logger.error("Local model fallback also failed")
+                        logger.error("❌ Local model fallback also failed")
                         return ""
                 else:
-                    logger.error("Cannot fallback to local model - failed to load")
+                    logger.error("❌ Cannot fallback to local model - failed to load")
                     return ""
+            elif not result:
+                logger.error("❌ All generation methods failed")
+                return ""
             return result
         else:
             # Direct local model usage
@@ -131,14 +137,20 @@ class ModelManager:
     def _generate_text_gemini(self, prompt: str, max_length: int) -> str:
         """Generate text using Gemini API."""
         if not self.gemini_client:
-            logger.warning("Gemini client not available")
+            logger.warning("🌟 Gemini client not available")
             return ""
         
         try:
+            logger.info("🌟 Attempting text generation with Gemini API...")
             result = self.gemini_client.generate_text(prompt, max_length)
-            return result if result else ""
+            if result:
+                logger.info("✅ Gemini API generated text successfully")
+                return result
+            else:
+                logger.warning("❌ Gemini API returned empty result")
+                return ""
         except Exception as e:
-            logger.error(f"Error generating text with Gemini: {e}")
+            logger.error(f"❌ Error generating text with Gemini: {e}")
             return ""
     
     def _generate_text_openrouter(self, prompt: str, max_length: int) -> str:
@@ -146,9 +158,11 @@ class ModelManager:
         max_retries_per_model = 2  # Give each model 2 chances
         retry_delay = 5  # Wait 5 seconds between retries to be respectful of rate limits
         
+        logger.info(f"🚀 Trying {len(OPENROUTER_MODELS_TO_TRY)} OpenRouter models...")
+        
         # Try each OpenRouter model in order
         for model_index, model_name in enumerate(OPENROUTER_MODELS_TO_TRY):
-            logger.info(f"Trying OpenRouter model {model_index + 1}/{len(OPENROUTER_MODELS_TO_TRY)}: {model_name}")
+            logger.info(f"📡 Trying OpenRouter model {model_index + 1}/{len(OPENROUTER_MODELS_TO_TRY)}: {model_name}")
             
             for attempt in range(max_retries_per_model):
                 try:
@@ -195,7 +209,7 @@ class ModelManager:
                     # Success! Extract and return the response
                     result = response.json()
                     reply = result["choices"][0]["message"]["content"]
-                    logger.info(f"Successfully generated text using {model_name}")
+                    logger.info(f"✅ Successfully generated text using {model_name}")
                     return self._clean_generated_text(reply)
                     
                 except Exception as e:
@@ -208,13 +222,39 @@ class ModelManager:
                         break  # Try next model
         
         # If we get here, all OpenRouter models failed
-        logger.error("All OpenRouter models failed. Falling back to local model.")
-        if FALLBACK_TO_LOCAL:
-            return self._generate_text_local(prompt, max_length)
-        else:
-            return ""
+        logger.warning("🚫 All OpenRouter models failed or rate limited")
+        return ""  # Return empty string to trigger Gemini fallback in main generate_text method
     
+    async def _test_openrouter_model(self, model_name: str, prompt: str) -> str:
+        """Test a specific OpenRouter model with a simple prompt."""
+        url = "https://openrouter.ai/api/v1/chat/completions"
+        
+        headers = {
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "http://localhost:3000",
+            "X-Title": "MemoSpark"
+        }
+        
+        data = {
+            "model": model_name,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 50,
+            "temperature": 0.7
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            timeout = aiohttp.ClientTimeout(total=30)
+            async with session.post(url, headers=headers, json=data, timeout=timeout) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    if 'choices' in result and result['choices']:
+                        content = result['choices'][0]['message']['content']
+                        return content.strip()
+                return ""
+
     def _generate_text_local(self, prompt: str, max_length: int) -> str:
+        """Generate text using local model."""
         try:
             # Check if we have a loaded model
             if not self.current_model_name or not self.model or not self.tokenizer:
