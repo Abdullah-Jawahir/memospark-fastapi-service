@@ -25,6 +25,9 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODEL = "deepseek/deepseek-chat-v3-0324:free"
 
+# Google Gemini API config
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
 # Multiple OpenRouter models to try in order (all free tier)
 OPENROUTER_MODELS_TO_TRY = [
     "deepseek/deepseek-chat-v3-0324:free",  # Primary model
@@ -36,7 +39,10 @@ OPENROUTER_MODELS_TO_TRY = [
 ]
 
 ENABLE_OPENROUTER = bool(OPENROUTER_API_KEY) and os.getenv("ENABLE_OPENROUTER", "true").lower() == "true"
+ENABLE_GEMINI = bool(GEMINI_API_KEY) and os.getenv("ENABLE_GEMINI", "true").lower() == "true"
 FALLBACK_TO_LOCAL = os.getenv("FALLBACK_TO_LOCAL", "true").lower() == "true"
+# Disable rule-based fallback for document processing to avoid irrelevant content
+ENABLE_RULE_BASED_FALLBACK = os.getenv("ENABLE_RULE_BASED_FALLBACK", "false").lower() == "true"
 
 # Model configurations
 MODEL_CONFIGS = {
@@ -78,7 +84,7 @@ LANGUAGE_PROMPTS = {
 }
 
 # Supported file types
-SUPPORTED_FILE_TYPES = ["pdf", "docx", "pptx"]
+SUPPORTED_FILE_TYPES = ["pdf", "docx", "pptx", "txt"]
 
 # Content generation limits
 GENERATION_LIMITS = {
