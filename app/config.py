@@ -28,6 +28,23 @@ OPENROUTER_MODEL = "deepseek/deepseek-chat-v3-0324:free"
 # Google Gemini API config
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
+# AI Model Priority Configuration
+# Configurable priority order for AI services
+# Options: "openrouter", "gemini", "local", "rule_based"
+# Default: openrouter -> gemini -> local -> rule_based
+AI_MODEL_PRIORITY = os.getenv("AI_MODEL_PRIORITY", "openrouter,gemini,local,rule_based").split(",")
+
+# Clean up any whitespace from the priority list
+AI_MODEL_PRIORITY = [model.strip().lower() for model in AI_MODEL_PRIORITY]
+
+# Validate priority configuration
+VALID_MODEL_TYPES = {"openrouter", "gemini", "local", "rule_based"}
+AI_MODEL_PRIORITY = [model for model in AI_MODEL_PRIORITY if model in VALID_MODEL_TYPES]
+
+# Ensure we have at least one fallback if list is empty or invalid
+if not AI_MODEL_PRIORITY:
+    AI_MODEL_PRIORITY = ["openrouter", "gemini", "local", "rule_based"]
+
 # Multiple OpenRouter models to try in order (only working free tier models)
 OPENROUTER_MODELS_TO_TRY = [
     "deepseek/deepseek-chat-v3-0324:free",  # Primary model - confirmed working
