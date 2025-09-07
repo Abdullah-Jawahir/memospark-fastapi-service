@@ -141,6 +141,10 @@ Make questions relevant to the topic content and ensure answers are educational 
         logger.info(f"Parsing flashcard content, expected: {expected_count}, content length: {len(content)}")
         logger.debug(f"Content preview: {content[:300]}...")
         
+        # First, remove AI introduction text from the entire content
+        content = self._remove_ai_introduction(content)
+        logger.debug(f"Content after intro removal: {content[:300]}...")
+        
         # Split content by flashcard separators
         # Look for patterns like "Q:", "Question:", "A:", "Answer:" or numbered patterns
         sections = re.split(r'(?:Q:|Question:|^\d+\.|^-\s*)', content, flags=re.MULTILINE)
@@ -211,11 +215,55 @@ Make questions relevant to the topic content and ensure answers are educational 
         
         return cleaned_flashcards[:expected_count]
     
+    def _remove_ai_introduction(self, content: str) -> str:
+        """Remove AI introduction and preamble text from the entire content."""
+        # Patterns to match AI introduction text
+        intro_patterns = [
+            r'Here are \d+.*?flashcards?.*?:\s*',
+            r'I\'ll (?:create|generate) \d+.*?flashcards?.*?:\s*',
+            r'Below are \d+.*?flashcards?.*?:\s*',
+            r'The following are \d+.*?flashcards?.*?:\s*',
+            r'\d+.*?flashcards?.*?based on.*?:\s*',
+            r'.*?flashcards? about.*?for.*?learners?:\s*',
+            r'.*?based on the provided content and focusing on.*?:\s*',
+            r'Let me (?:create|generate).*?flashcards?.*?:\s*',
+            r'I\'ve (?:created|generated).*?flashcards?.*?:\s*',
+            r'These are.*?flashcards?.*?:\s*'
+        ]
+        
+        for pattern in intro_patterns:
+            content = re.sub(pattern, '', content, flags=re.IGNORECASE | re.DOTALL)
+        
+        # Also remove any leading lines that look like introduction
+        lines = content.split('\n')
+        cleaned_lines = []
+        skip_intro = True
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Skip lines that look like AI introduction
+            if skip_intro and any(phrase in line.lower() for phrase in [
+                'here are', 'below are', 'these are', 'i\'ll create', 'i\'ve created',
+                'the following', 'let me', 'educational flashcards', 'based on the provided content'
+            ]):
+                continue
+            
+            skip_intro = False
+            cleaned_lines.append(line)
+        
+        return '\n'.join(cleaned_lines)
+    
     def _parse_alternative_format(self, content: str, needed_count: int) -> List[Dict[str, Any]]:
         """Alternative parsing method for different response formats."""
         flashcards = []
         
         logger.debug(f"Trying alternative parsing for {needed_count} flashcards")
+        
+        # Clean content first to remove AI introduction
+        content = self._remove_ai_introduction(content)
         
         # Method 1: Look for question-answer pairs in various formats
         lines = content.split('\n')
@@ -318,6 +366,23 @@ Make questions relevant to the topic content and ensure answers are educational 
         if not text:
             return ""
         
+        # Remove AI introduction and preamble text (common patterns)
+        intro_patterns = [
+            r'Here are \d+ .*? flashcards? .*?:',
+            r'I\'ll (?:create|generate) \d+ .*? flashcards? .*?:',
+            r'Below are \d+ .*? flashcards? .*?:',
+            r'The following are \d+ .*? flashcards? .*?:',
+            r'\d+ .*? flashcards? .*? based on .*?:',
+            r'.*? flashcards? about .*? for .*? learners?:',
+            r'.*? based on the provided content and focusing on .*?:',
+            r'Let me (?:create|generate) .*? flashcards? .*?:',
+            r'I\'ve (?:created|generated) .*? flashcards? .*?:',
+            r'These are .*? flashcards? .*?:'
+        ]
+        
+        for pattern in intro_patterns:
+            text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+        
         # Remove markdown formatting
         text = re.sub(r'#{1,6}\s*', '', text)  # Remove headers
         text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)  # Remove bold
@@ -347,9 +412,25 @@ Make questions relevant to the topic content and ensure answers are educational 
     
     def _is_valid_flashcard(self, question: str, answer: str) -> bool:
         """Check if a flashcard meets quality standards."""
-        # Basic length checks
-        if len(question) < 10 or len(answer) < 10:
+        # Basic length checks (more reasonable limits)
+        if len(question) < 10 or len(answer) < 3:  # Allow shorter answers like "Ceylon", "DNA", etc.
             return False
+        
+        # Check for overly long questions (likely AI introduction text)
+        if len(question) > 200:  # Questions shouldn't be paragraphs
+            return False
+        
+        # Check for introduction patterns in questions
+        intro_indicators = [
+            'here are', 'below are', 'the following', 'i\'ll create', 'i\'ve created',
+            'these are', 'let me', 'based on the provided content', 'focusing on',
+            'for beginners', 'for intermediate', 'for advanced', 'educational flashcards'
+        ]
+        
+        question_lower = question.lower()
+        for indicator in intro_indicators:
+            if indicator in question_lower:
+                return False
         
         # Check for meaningful content
         if question.lower().startswith(('what does', 'refer to', '###', '**')):
@@ -366,8 +447,12 @@ Make questions relevant to the topic content and ensure answers are educational 
         if answer.endswith('?'):
             return False
         
-        # Check for complete sentences
-        if not answer.endswith(('.', '!', '?')):
+        # Answers should have some proper ending (but allow short answers)
+        if len(answer) > 10 and not answer.endswith(('.', '!', '?')):
+            return False
+        
+        # Check for duplicate content (question and answer shouldn't be identical)
+        if question.lower().strip('?') == answer.lower().strip('.'):
             return False
         
         return True
